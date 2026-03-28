@@ -869,6 +869,76 @@ function runAnalysis() {
 }
 
 // --------------------------------------------------------
+// THEME TOGGLE
+// --------------------------------------------------------
+const THEME_STORAGE_KEY = 'ats_theme';
+
+function getStoredTheme() {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    return value === 'light' || value === 'dark' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function getPreferredTheme() {
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function setTheme(theme) {
+  const resolved = theme === 'light' ? 'light' : 'dark';
+  const isLight = resolved === 'light';
+
+  document.documentElement.setAttribute('data-theme', resolved);
+
+  const toggle = document.getElementById('themeToggle');
+  const toggleIcon = document.getElementById('themeToggleIcon');
+  const toggleText = document.getElementById('themeToggleText');
+
+  if (toggle) toggle.setAttribute('aria-pressed', String(isLight));
+  if (toggleIcon) toggleIcon.textContent = isLight ? '☀️' : '🌙';
+  if (toggleText) toggleText.textContent = isLight ? 'Світла' : 'Темна';
+}
+
+function persistTheme(theme) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Ignore storage write errors (private mode, blocked storage).
+  }
+}
+
+function initThemeToggle() {
+  const toggle = document.getElementById('themeToggle');
+  const initialTheme = getStoredTheme() || getPreferredTheme();
+  setTheme(initialTheme);
+
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      const next = current === 'light' ? 'dark' : 'light';
+      setTheme(next);
+      persistTheme(next);
+    });
+  }
+
+  const media = window.matchMedia('(prefers-color-scheme: light)');
+  const handlePreferenceChange = (event) => {
+    if (getStoredTheme()) return;
+    setTheme(event.matches ? 'light' : 'dark');
+  };
+
+  if (typeof media.addEventListener === 'function') {
+    media.addEventListener('change', handlePreferenceChange);
+  } else if (typeof media.addListener === 'function') {
+    media.addListener(handlePreferenceChange);
+  }
+}
+
+initThemeToggle();
+
+// --------------------------------------------------------
 // NAV SCROLL EFFECT
 // --------------------------------------------------------
 window.addEventListener('scroll', () => {

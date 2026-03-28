@@ -6,6 +6,7 @@
 
 /* === TOKENS === */
 :root {
+  color-scheme: dark;
   --bg: #080b14;
   --bg2: #0d1220;
   --bg3: #111827;
@@ -25,7 +26,28 @@
   --radius-sm: 10px;
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   --shadow-glow: 0 0 40px rgba(99, 102, 241, 0.15);
+  --nav-bg: rgba(8, 11, 20, 0.7);
+  --nav-bg-scrolled: rgba(8, 11, 20, 0.92);
+  --ring-track: rgba(255, 255, 255, 0.06);
   --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f6fc;
+  --bg2: #e8eef9;
+  --bg3: #dce5f4;
+  --glass: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(15, 23, 42, 0.14);
+  --glass-hover: rgba(255, 255, 255, 0.9);
+  --text: #0f172a;
+  --text-muted: #334155;
+  --text-dim: #64748b;
+  --shadow: 0 8px 26px rgba(15, 23, 42, 0.12);
+  --shadow-glow: 0 0 28px rgba(99, 102, 241, 0.12);
+  --nav-bg: rgba(243, 246, 252, 0.78);
+  --nav-bg-scrolled: rgba(243, 246, 252, 0.95);
+  --ring-track: rgba(15, 23, 42, 0.12);
 }
 
 *,
@@ -79,14 +101,14 @@ body {
   z-index: 100;
   padding: 16px 0;
   transition: var(--transition);
-  background: rgba(8, 11, 20, 0.7);
+  background: var(--nav-bg);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid transparent;
 }
 
 .nav.scrolled {
   border-bottom-color: var(--glass-border);
-  background: rgba(8, 11, 20, 0.92);
+  background: var(--nav-bg-scrolled);
 }
 
 .nav-inner {
@@ -154,6 +176,44 @@ body {
   opacity: 0.9;
   transform: translateY(-1px);
   box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--glass);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+
+.theme-toggle:hover {
+  background: var(--glass-hover);
+  border-color: rgba(99, 102, 241, 0.32);
+  transform: translateY(-1px);
+}
+
+.theme-toggle-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.theme-toggle-text {
+  font-size: 0.77rem;
+  color: var(--text-muted);
+}
+
+.ring-track,
+.score-ring-track {
+  stroke: var(--ring-track);
 }
 
 /* === HERO === */
@@ -1386,6 +1446,10 @@ body {
     display: none;
   }
 
+  .theme-toggle {
+    margin-left: auto;
+  }
+
   .steps-flow {
     flex-direction: column;
   }
@@ -1406,6 +1470,14 @@ body {
 }
 
 @media (max-width: 480px) {
+  .theme-toggle {
+    padding: 8px;
+  }
+
+  .theme-toggle-text {
+    display: none;
+  }
+
   .hero-stats {
     flex-direction: column;
     align-items: center;

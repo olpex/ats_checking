@@ -29,6 +29,10 @@
         <li><a href="#analyzer">Аналізатор</a></li>
         <li><a href="#tips">Поради</a></li>
       </ul>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Перемкнути тему" aria-pressed="false">
+        <span class="theme-toggle-icon" id="themeToggleIcon">🌙</span>
+        <span class="theme-toggle-text" id="themeToggleText">Темна</span>
+      </button>
       <button class="nav-cta" onclick="document.getElementById('analyzer').scrollIntoView({behavior:'smooth'})">
         Аналізувати →
       </button>
@@ -88,7 +92,8 @@
         </div>
         <div class="mockup-score-ring">
           <svg viewBox="0 0 120 120" class="ring-svg" width="120" height="120">
-            <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="10" />
+            <circle class="ring-track" cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.06)"
+              stroke-width="10" />
             <circle cx="60" cy="60" r="50" fill="none" stroke="url(#heroGrad)" stroke-width="10" stroke-dasharray="314"
               stroke-dashoffset="94" stroke-linecap="round" transform="rotate(-90 60 60)" />
             <defs>
@@ -304,7 +309,8 @@ Software Engineer
             <h3>ATS Score</h3>
             <div class="score-ring-wrap">
               <svg viewBox="0 0 160 160" width="160" height="160" class="score-ring-svg">
-                <circle cx="80" cy="80" r="65" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="14" />
+                <circle class="score-ring-track" cx="80" cy="80" r="65" fill="none" stroke="rgba(255,255,255,0.06)"
+                  stroke-width="14" />
                 <circle id="scoreArc" cx="80" cy="80" r="65" fill="none" stroke="url(#scoreGrad)" stroke-width="14"
                   stroke-dasharray="408" stroke-dashoffset="408" stroke-linecap="round" transform="rotate(-90 80 80)" />
                 <defs>
