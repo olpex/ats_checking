@@ -252,34 +252,28 @@ Software Engineer
               <div class="input-icon">💼</div>
               <div style="flex:1">
                 <h3>Опис вакансії</h3>
-                <p>Вставте текст або вкажіть <strong>посилання на вакансію</strong></p>
+                <p>Вставте текст опису посади з сайту вакансій</p>
               </div>
             </div>
 
             <!-- Source toggle tabs -->
             <div class="source-tabs">
               <button class="src-tab active" id="srcTabText" onclick="switchJobSource('text')">📝 Текст</button>
-              <button class="src-tab" id="srcTabUrl" onclick="switchJobSource('url')">🔗 Посилання</button>
+              <button class="src-tab" id="srcTabUrl" onclick="switchJobSource('url')">🔗 Посилання <span class="beta-badge">β</span></button>
             </div>
 
             <!-- URL input panel -->
             <div class="url-panel" id="jobUrlPanel" style="display:none">
+              <div class="url-warning">
+                ⚠️ Більшість сайтів (Work.ua, LinkedIn, DOU.ua) блокують автоматичне завантаження через CAPTCHA та Cloudflare. Якщо завантаження не вдалося — скопіюйте текст вакансії вручну.
+              </div>
               <div class="url-input-row">
                 <input type="url" id="jobUrlInput" class="url-input"
-                  placeholder="https://dou.ua/jobs/... або https://www.linkedin.com/jobs/..."
+                  placeholder="https://dou.ua/jobs/... або https://djinni.co/jobs/..."
                   onkeydown="if(event.key==='Enter') fetchJobFromUrl()" />
                 <button class="btn-fetch" id="fetchBtn" onclick="fetchJobFromUrl()">
                   <span id="fetchBtnText">Завантажити</span>
                 </button>
-              </div>
-              <div class="url-supported">
-                <span class="supported-label">Підтримувані сайти:</span>
-                <span class="site-badge">LinkedIn</span>
-                <span class="site-badge">DOU.ua</span>
-                <span class="site-badge">Work.ua</span>
-                <span class="site-badge">Djinni.co</span>
-                <span class="site-badge">Rabota.ua</span>
-                <span class="site-badge">та інші</span>
               </div>
               <div class="fetch-status" id="fetchStatus"></div>
             </div>

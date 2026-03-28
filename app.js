@@ -587,6 +587,23 @@ function looksLikeHtml(content) {
   return /<(html|body|main|article|section|div|p)[\s>]/i.test(content);
 }
 
+function detectBlockedPage(html) {
+  const lower = (html || '').toLowerCase();
+  const signals = [
+    { pattern: /captcha|recaptcha|hcaptcha|turnstile/i, label: 'CAPTCHA' },
+    { pattern: /cloudflare.*challenge|cf-browser-verification|ray id/i, label: 'Cloudflare захист' },
+    { pattern: /access denied|403 forbidden|forbidden/i, label: 'доступ заблоковано (403)' },
+    { pattern: /please verify you are human|перевірте що ви не бот/i, label: 'перевірка бота' },
+    { pattern: /checking your browser before|please wait while we check/i, label: 'перевірка браузера' },
+  ];
+  for (const s of signals) {
+    if (s.pattern.test(html)) return s.label;
+  }
+  // Very short response that's not job content
+  if (lower.length < 200 && /blocked|denied|error/.test(lower)) return 'відповідь заблокована';
+  return null;
+}
+
 function extractJobText(rawContent) {
   if (!rawContent) return '';
   const source = String(rawContent).trim();
@@ -649,6 +666,16 @@ async function fetchJobContentWithStrategies(rawUrl) {
   for (const strategy of strategies) {
     try {
       const payload = await strategy.request();
+
+      // Check if response is a CAPTCHA/block page
+      if (looksLikeHtml(payload)) {
+        const blockReason = detectBlockedPage(payload);
+        if (blockReason) {
+          errors.push(`${strategy.label}: ${blockReason}`);
+          continue;
+        }
+      }
+
       const extracted = extractJobText(payload);
       if (countWords(extracted) >= 35) {
         return { extracted, strategy: strategy.label };
@@ -774,8 +801,13 @@ async function fetchJobFromUrl() {
 
   } catch (err) {
     let msg = err.message || 'Помилка мережі.';
-    if (err.name === 'TimeoutError' || err.name === 'AbortError') msg = 'Час очікування вичерпано. Спробуйте ще раз або скопіюйте текст вручну.';
-    if (msg.includes('fetch') || msg.includes('network')) msg = 'Помилка мережі. Перевірте інтернет-з\'єднання.';
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      msg = 'Час очікування вичерпано. Сайт може бути недоступний.';
+    } else if (msg.includes('CAPTCHA') || msg.includes('Cloudflare') || msg.includes('403') || msg.includes('заблоковано')) {
+      msg = `Сайт ${parsedUrl.hostname} блокує автоматичне завантаження (CAPTCHA/Cloudflare). Скопіюйте текст вакансії зі сторінки вручну та вставте на вкладці "Текст".`;
+    } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch')) {
+      msg = 'Не вдалося підключитися. Спробуйте скопіювати текст вакансії вручну.';
+    }
 
     statusEl.className = 'fetch-status error';
     statusEl.textContent = `❌ ${msg}`;
