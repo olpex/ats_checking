@@ -487,6 +487,9 @@ const JOB_SITE_SELECTORS = [
 
 function cleanExtractedText(text) {
   return text
+    .replace(/^Title:\s.*$/gmi, '')
+    .replace(/^URL Source:\s.*$/gmi, '')
+    .replace(/^Markdown Content:\s*$/gmi, '')
     .replace(/\s{3,}/g, '\n\n')  // collapse excess blank lines
     .replace(/\t/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
@@ -494,9 +497,119 @@ function cleanExtractedText(text) {
     .trim();
 }
 
+function normalizeJobUrlInput(rawInput) {
+  const trimmed = (rawInput || '').trim();
+  if (!trimmed) return '';
+  // Allow pasting domains without protocol.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function looksLikeHtml(content) {
+  return /<(html|body|main|article|section|div|p)[\s>]/i.test(content);
+}
+
+function extractJobText(rawContent) {
+  if (!rawContent) return '';
+  const source = String(rawContent).trim();
+  if (!source) return '';
+  if (looksLikeHtml(source)) return extractJobTextFromHtml(source);
+  return cleanExtractedText(source);
+}
+
+function extractErrorMessage(err) {
+  const msg = err && err.message ? err.message : String(err || 'unknown_error');
+  if (msg.includes('Failed to fetch')) return 'мережевий запит заблоковано або недоступний';
+  if (msg.includes('HTTP ')) return msg;
+  return msg;
+}
+
+async function fetchJobContentWithStrategies(rawUrl) {
+  const urlNoProtocol = rawUrl.replace(/^https?:\/\//i, '');
+  const strategies = [
+    {
+      label: 'прямий запит',
+      request: () => fetch(rawUrl, { signal: createTimeoutSignal(12000) }).then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      }),
+    },
+    {
+      label: 'allorigins/raw',
+      request: () => fetch(
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`,
+        { signal: createTimeoutSignal(15000) }
+      ).then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      }),
+    },
+    {
+      label: 'allorigins/get',
+      request: () => fetch(
+        `https://api.allorigins.win/get?url=${encodeURIComponent(rawUrl)}`,
+        { signal: createTimeoutSignal(15000) }
+      ).then(async r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        return data && typeof data.contents === 'string' ? data.contents : '';
+      }),
+    },
+    {
+      label: 'r.jina.ai',
+      request: () => fetch(
+        `https://r.jina.ai/http://${urlNoProtocol}`,
+        { signal: createTimeoutSignal(18000) }
+      ).then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      }),
+    },
+  ];
+
+  const errors = [];
+  for (const strategy of strategies) {
+    try {
+      const payload = await strategy.request();
+      const extracted = extractJobText(payload);
+      if (countWords(extracted) >= 35) {
+        return { extracted, strategy: strategy.label };
+      }
+      errors.push(`${strategy.label}: замало тексту після парсингу`);
+    } catch (err) {
+      errors.push(`${strategy.label}: ${extractErrorMessage(err)}`);
+    }
+  }
+
+  throw new Error(`Не вдалося отримати текст вакансії. Спроби: ${errors.join(' | ')}`);
+}
+
 function extractJobTextFromHtml(html) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
+
+  // Try structured data first (many job pages expose JobPosting in JSON-LD)
+  for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const payload = JSON.parse(script.textContent || '{}');
+      const entries = Array.isArray(payload) ? payload : [payload];
+      for (const entry of entries) {
+        const node = entry && entry['@graph'] ? entry['@graph'][0] : entry;
+        if (!node || (node['@type'] && !String(node['@type']).toLowerCase().includes('jobposting'))) continue;
+        const pieces = [
+          node.title,
+          node.description,
+          node.responsibilities,
+          node.qualifications,
+          node.skills,
+        ].filter(Boolean).join('\n\n');
+        const cleaned = cleanExtractedText(String(pieces).replace(/<[^>]+>/g, ' '));
+        if (cleaned.length > 180) return cleaned;
+      }
+    } catch {
+      // Ignore malformed JSON-LD blocks.
+    }
+  }
 
   // Remove noise elements
   for (const el of doc.querySelectorAll('script, style, nav, header, footer, iframe, noscript, .cookie-banner, [aria-hidden="true"]')) {
@@ -544,7 +657,8 @@ async function fetchJobFromUrl() {
   const btnText = document.getElementById('fetchBtnText');
   const jobTextarea = document.getElementById('jobText');
 
-  const rawUrl = input.value.trim();
+  const rawUrl = normalizeJobUrlInput(input.value);
+  input.value = rawUrl;
 
   // Basic validation
   if (!rawUrl) {
@@ -568,26 +682,14 @@ async function fetchJobFromUrl() {
   statusEl.className = 'fetch-status loading';
   statusEl.textContent = `⏳ Запит до ${parsedUrl.hostname}...`;
 
-  // CORS proxy — allorigins returns raw HTML
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`;
-
   try {
-    const resp = await fetch(proxyUrl, { signal: createTimeoutSignal(15000) });
-
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-    const html = await resp.text();
-    const extracted = extractJobTextFromHtml(html);
-
-    if (!extracted || extracted.length < 100) {
-      throw new Error('Не вдалося витягнути текст вакансії. Спробуйте скопіювати текст зі сторінки вручну.');
-    }
+    const { extracted, strategy } = await fetchJobContentWithStrategies(rawUrl);
 
     jobTextarea.value = extracted;
     document.getElementById('jobCount').textContent = `${countWords(extracted)} слів`;
 
     statusEl.className = 'fetch-status success';
-    statusEl.textContent = `✅ Завантажено з ${parsedUrl.hostname} · ${countWords(extracted)} слів`;
+    statusEl.textContent = `✅ Завантажено з ${parsedUrl.hostname} · ${countWords(extracted)} слів (${strategy})`;
 
     // Auto-switch to text view so user can review
     switchJobSource('text');
@@ -1054,6 +1156,17 @@ function rewriteResume(parsed, matched, missing, jobText) {
   const level = years >= 5 ? 'Senior' : years >= 3 ? 'Middle' : 'Junior';
   const topMatched = matched.slice(0, 6);
   const topMissing = missing.slice(0, 5);
+  const rawLines = parsed.raw.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const inferredExperience = rawLines
+    .filter(l => /(\b(19|20)\d{2}\b|present|current|нині|досі|developer|engineer|manager|analyst|розробник|інженер|менеджер|аналітик)/i.test(l))
+    .slice(0, 14)
+    .join('\n');
+
+  const inferredEducation = rawLines
+    .filter(l => /(education|освіта|університет|university|college|інститут|бакалавр|магістр|degree|bachelor|master)/i.test(l))
+    .slice(0, 10)
+    .join('\n');
 
   // --- Summary ---
   let newSummary = parsed.summary;
@@ -1077,18 +1190,21 @@ function rewriteResume(parsed, matched, missing, jobText) {
   const matchedSkills = topMatched;
   const restSkills = origSkillTokens.filter(s => !topMatched.some(m => m.toLowerCase() === s.toLowerCase()));
   let newSkills = '';
-  if (matchedSkills.length > 0) newSkills += `✦ Ключові (з вакансії): ${matchedSkills.join(', ')}\n`;
-  if (restSkills.length > 0) newSkills += `◦ Додаткові: ${restSkills.join(', ')}\n`;
-  if (topMissing.length > 0) newSkills += `⚡ Рекомендовано додати: ${topMissing.join(', ')}`;
+  if (matchedSkills.length > 0) newSkills += `Ключові (з вакансії): ${matchedSkills.join(', ')}\n`;
+  if (restSkills.length > 0) newSkills += `Додаткові: ${restSkills.join(', ')}\n`;
+  if (topMissing.length > 0) newSkills += `Рекомендовано додати: ${topMissing.join(', ')}`;
   newSkills = newSkills.trim();
+
+  const finalExperience = parsed.experience && parsed.experience.trim() ? parsed.experience.trim() : inferredExperience;
+  const finalEducation = parsed.education && parsed.education.trim() ? parsed.education.trim() : inferredEducation;
 
   return {
     name: parsed.name || 'Ваше Ім\'я',
     contact: parsed.contact,
     summary: newSummary,
     skills: newSkills || parsed.skills,
-    experience: parsed.experience,
-    education: parsed.education,
+    experience: finalExperience || 'Додайте 3-5 пунктів досвіду роботи у форматі: роль, компанія, період, ключові досягнення.',
+    education: finalEducation || 'Додайте освіту: навчальний заклад, спеціальність, ступінь, роки навчання.',
     other: parsed.other,
   };
 }
@@ -1161,10 +1277,12 @@ async function downloadResume() {
   btn.textContent = '⏳ Генерація...';
   try {
     if (fmt === 'docx') await exportDOCX(_latestAdapted);
-    else exportPDF(_latestAdapted);
+    else await exportPDF(_latestAdapted);
   } catch (e) {
     console.error('[ATSAnalyzer] Export error:', e);
-    btn.textContent = '❌ Помилка';
+    const reason = e && e.message ? e.message : 'Невідома помилка';
+    btn.textContent = '❌ Помилка експорту';
+    alert(`Не вдалося сформувати файл (${fmt.toUpperCase()}).\n${reason}\n\nСпробуйте формат DOCX.`);
     setTimeout(() => { btn.textContent = '⬇ Завантажити резюме'; btn.disabled = false; }, 2500);
     return;
   }
@@ -1181,7 +1299,13 @@ async function exportDOCX(adapted) {
   const children = [];
 
   const heading = (text, lvl) => new Paragraph({
-    children: [new TextRun({ text, bold: true, size: lvl === 'title' ? 36 : 24, color: lvl === 'title' ? '1e0050' : '6366f1' })],
+    children: [new TextRun({
+      text,
+      bold: true,
+      size: lvl === 'title' ? 36 : 24,
+      color: lvl === 'title' ? '1e0050' : '6366f1',
+      font: 'Calibri',
+    })],
     alignment: lvl === 'title' ? AlignmentType.CENTER : AlignmentType.LEFT,
     spacing: { before: lvl === 'title' ? 0 : 240, after: 60 },
     border: lvl === 'h2' ? {
@@ -1191,7 +1315,7 @@ async function exportDOCX(adapted) {
 
   const body = (text) => text.split('\n').map(line =>
     new Paragraph({
-      children: [new TextRun({ text: line, size: 20 })],
+      children: [new TextRun({ text: line, size: 20, font: 'Calibri' })],
       spacing: { after: 40 },
     })
   );
@@ -1201,7 +1325,7 @@ async function exportDOCX(adapted) {
 
   // Contact
   if (adapted.contact) children.push(new Paragraph({
-    children: [new TextRun({ text: adapted.contact, color: '555577', size: 18 })],
+    children: [new TextRun({ text: adapted.contact, color: '555577', size: 18, font: 'Calibri' })],
     alignment: AlignmentType.CENTER,
     spacing: { after: 120 },
   }));
@@ -1228,9 +1352,62 @@ async function exportDOCX(adapted) {
 // --------------------------------------------------------
 // PDF EXPORT (jsPDF)
 // --------------------------------------------------------
-function exportPDF(adapted) {
-  const { jsPDF } = window.jspdf;
+const PDF_FONT_URLS = {
+  normal: 'https://cdn.jsdelivr.net/gh/google/fonts/ofl/notosans/NotoSans-Regular.ttf',
+  bold: 'https://cdn.jsdelivr.net/gh/google/fonts/ofl/notosans/NotoSans-Bold.ttf',
+};
+
+let _pdfFontCache = null;
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return btoa(binary);
+}
+
+async function ensurePdfUnicodeFonts(doc) {
+  if (!_pdfFontCache) {
+    const [regResp, boldResp] = await Promise.all([
+      fetch(PDF_FONT_URLS.normal, { signal: createTimeoutSignal(15000) }),
+      fetch(PDF_FONT_URLS.bold, { signal: createTimeoutSignal(15000) }),
+    ]);
+
+    if (!regResp.ok || !boldResp.ok) {
+      throw new Error('Не вдалося завантажити PDF-шрифт.');
+    }
+
+    const [regBuffer, boldBuffer] = await Promise.all([regResp.arrayBuffer(), boldResp.arrayBuffer()]);
+    _pdfFontCache = {
+      normal: arrayBufferToBase64(regBuffer),
+      bold: arrayBufferToBase64(boldBuffer),
+    };
+  }
+
+  const fontList = typeof doc.getFontList === 'function' ? doc.getFontList() : {};
+  if (!fontList.NotoSans) {
+    doc.addFileToVFS('NotoSans-Regular.ttf', _pdfFontCache.normal);
+    doc.addFont('NotoSans-Regular.ttf', 'NotoSans', 'normal');
+    doc.addFileToVFS('NotoSans-Bold.ttf', _pdfFontCache.bold);
+    doc.addFont('NotoSans-Bold.ttf', 'NotoSans', 'bold');
+  }
+}
+
+async function exportPDF(adapted) {
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) throw new Error('jsPDF не завантажено. Спробуйте формат DOCX.');
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const requiresUnicode = /[^\u0000-\u00ff]/.test(JSON.stringify(adapted));
+  let fontFamily = 'helvetica';
+
+  if (requiresUnicode) {
+    await ensurePdfUnicodeFonts(doc);
+    fontFamily = 'NotoSans';
+  }
 
   const ML = 18, MR = 18, MT = 18;
   const PW = doc.internal.pageSize.getWidth();
@@ -1244,7 +1421,7 @@ function exportPDF(adapted) {
 
   function addLine(text, { size = 10, bold = false, color = [40, 40, 50], align = 'left', spacing = 4 } = {}) {
     doc.setFontSize(size);
-    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFont(fontFamily, bold ? 'bold' : 'normal');
     doc.setTextColor(...color);
     const lines = doc.splitTextToSize(text || '', CW);
     const lineH = size * 0.38 + 1;
@@ -1257,7 +1434,7 @@ function exportPDF(adapted) {
     checkPageBreak(18);
     y += 4;
     doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(fontFamily, 'bold');
     doc.setTextColor(99, 102, 241);
     doc.text(title.toUpperCase(), ML, y);
     y += 2;
@@ -1266,7 +1443,7 @@ function exportPDF(adapted) {
     doc.line(ML, y, PW - MR, y);
     y += 5;
     doc.setTextColor(40, 40, 50);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(fontFamily, 'normal');
   }
 
   // Name
