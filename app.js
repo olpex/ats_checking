@@ -1074,39 +1074,72 @@ document.addEventListener('keydown', (e) => {
 // --------------------------------------------------------
 // SECTION PARSER — splits raw resume text into labelled blocks
 // --------------------------------------------------------
+const RESUME_SECTION_PATTERNS = [
+  { key: 'summary', labels: ['summary', 'profile', 'objective', 'about me', 'про мене', 'профіль', 'резюме', 'мета', 'ціль', 'personal statement', 'career summary', 'professional summary'] },
+  { key: 'experience', labels: ['experience', 'досвід', 'work history', 'work experience', 'employment', 'career', 'роботодавець', 'professional experience', 'professional background', 'історія роботи'] },
+  { key: 'education', labels: ['education', 'освіта', 'academic', 'навчання', 'university', 'університет', 'academic background', 'qualifications', 'кваліфікації'] },
+  { key: 'skills', labels: ['skills', 'навички', 'технології', 'tech stack', 'competencies', 'technologies', 'інструменти', 'tools', 'technical skills', 'hard skills'] },
+  { key: 'other', labels: ['languages', 'мови', 'certif', 'сертиф', 'projects', 'проєкти', 'awards', 'volunteer', 'досягнення', 'achievements', 'interests', 'інтереси', 'publications', 'публікації'] },
+];
+
+function isContactLine(line) {
+  return /@/.test(line) || /\+\d/.test(line) || /linkedin\.com/i.test(line) || /github\.com/i.test(line) || /(^|\s)\+?38\d{9}/.test(line) || /\d{3}[-.\s]\d{3}[-.\s]\d{4}/.test(line);
+}
+
+function isSectionHeading(line) {
+  const cleaned = line.replace(/[:：\-–—=]+$/g, '').trim().toLowerCase();
+  if (cleaned.length > 60) return null;
+  for (const sec of RESUME_SECTION_PATTERNS) {
+    for (const label of sec.labels) {
+      if (cleaned === label || cleaned.startsWith(label + ' ') || cleaned.endsWith(' ' + label) || cleaned.includes(label + ':') || cleaned.includes(label + ' —')) {
+        return sec.key;
+      }
+    }
+  }
+  // Heuristic: short ALL-CAPS or title-case lines that don't look like content
+  if (line.length <= 40 && line === line.toUpperCase() && /^[A-ZА-ЯІЇЄҐ\s]+$/.test(line)) {
+    const lower = line.toLowerCase().trim();
+    for (const sec of RESUME_SECTION_PATTERNS) {
+      for (const label of sec.labels) {
+        if (lower.includes(label)) return sec.key;
+      }
+    }
+  }
+  return null;
+}
+
 function parseResumeSections(text) {
   const result = { name: '', contact: '', summary: '', experience: '', education: '', skills: '', other: '', raw: text };
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   if (!lines.length) return result;
 
-  // Detect name — first short line without obvious contact indicators
-  const nameLine = lines.find(l => l.length >= 2 && l.length <= 60 && !/@/.test(l) && !/^\+/.test(l) && !/^\d/.test(l) && !/http/i.test(l));
+  // Detect name — first non-contact, non-section line that looks like a name
+  const nameLine = lines.find(l => {
+    if (l.length < 2 || l.length > 60) return false;
+    if (isContactLine(l)) return false;
+    if (isSectionHeading(l)) return false;
+    if (/^\d{4}/.test(l)) return false;
+    if (/^[•\-\*]/.test(l)) return false;
+    if (/http/i.test(l)) return false;
+    return true;
+  });
   if (nameLine) result.name = nameLine;
 
-  // Collect contact lines
-  const contactLines = lines.filter(l =>
-    /@/.test(l) || /\+\d/.test(l) || /linkedin\.com/i.test(l) || /github\.com/i.test(l) || /\d[\s.-]\d{2,}/.test(l)
-  );
+  // Collect contact lines (may be multiple)
+  const contactLines = lines.filter(l => isContactLine(l));
   const contactLineSet = new Set(contactLines);
   result.contact = contactLines.join('  |  ');
 
-  // Section heading matchers
-  const SEC_PATTERNS = [
-    { key: 'summary', pat: /^(summary|profile|objective|about me|про мене|профіль|мета|ціль)\b/i },
-    { key: 'experience', pat: /^(experience|досвід|work (history|experience)|employment|career|роботодавець)\b/i },
-    { key: 'education', pat: /^(education|освіта|academic|навчання|university|університет)\b/i },
-    { key: 'skills', pat: /^(skills?|навички|технології|tech stack|competencies|technologies|інструменти)\b/i },
-    { key: 'other', pat: /^(languages?|мови|certif|сертиф|projects?|проєкти|awards?|volunteer)\b/i },
-  ];
-
+  // Parse sections
   let cur = null;
   const buckets = { summary: [], experience: [], education: [], skills: [], other: [] };
 
   for (const line of lines) {
     if (line === result.name) continue;
     if (contactLineSet.has(line)) continue;
-    const match = SEC_PATTERNS.find(p => p.pat.test(line));
-    if (match) { cur = match.key; continue; }
+
+    const sectionKey = isSectionHeading(line);
+    if (sectionKey) { cur = sectionKey; continue; }
     if (cur) buckets[cur].push(line);
   }
 
@@ -1123,28 +1156,61 @@ function parseResumeSections(text) {
 // --------------------------------------------------------
 function detectJobTitle(jobText) {
   const pats = [
-    /we are (?:looking for|hiring|seeking) (?:a |an )?(.{4,55})(?:\.|,|\n)/i,
-    /(?:position|role|посада|вакансія):?\s*(.{4,55})(?:\n|$)/i,
-    /шукаємо\s+(.{4,55})(?:\n|,|$)/i,
-    /hiring:?\s*(.{4,55})(?:\n|$)/i,
+    /we are (?:looking for|hiring|seeking|searching for) (?:a |an )?(.{3,60})(?:\.|,|\n|$)/i,
+    /(?:position|role|посада|вакансія|job title):?\s*(.{3,60})(?:\n|$)/i,
+    /шукаємо\s+(.{3,60})(?:\n|,|\.|$)/i,
+    /шукаємо\s+(?:сильного|досвідченого)?\s*(.{3,60})(?:\n|,|\.|$)/i,
+    /hiring:?\s*(?:a |an )?(.{3,60})(?:\n|$)/i,
+    /(?:seeking|looking for)\s+(?:a |an )?(.{3,60})(?:\n|\.|,|$)/i,
+    /(?:join our team as|work as|become our)\s+(?:a |an )?(.{3,60})(?:\.|,|\n|$)/i,
+    /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}(?:\s+(?:Developer|Engineer|Manager|Designer|Analyst|Architect|Lead|Specialist|Consultant|Director|Admin|Devops)))/m,
   ];
   for (const p of pats) {
     const m = jobText.match(p);
-    if (m && m[1].trim().length > 3) return m[1].trim().replace(/\.$/, '');
+    if (m && m[1]) {
+      const title = m[1].trim().replace(/[.\s]+$/, '');
+      if (title.length >= 3 && title.length <= 60) return title;
+    }
   }
-  // Fallback: first non-blank line
-  const firstLine = jobText.split('\n').map(l => l.trim()).find(l => l.length > 3 && l.length < 60);
-  return firstLine || 'Спеціаліст';
+  // Fallback: first line that looks like a job title
+  const lines = jobText.split('\n').map(l => l.trim()).filter(l => l.length > 3);
+  for (const line of lines) {
+    if (line.length > 60) continue;
+    if (/developer|engineer|manager|designer|analyst|architect|lead|specialist|consultant|devops|маркетолог|розробник|інженер|менеджер|дизайнер|аналітик/i.test(line)) {
+      return line.replace(/[.\s]+$/, '');
+    }
+  }
+  return lines[0] || 'Спеціаліст';
 }
 
 // --------------------------------------------------------
 // HELPER — estimate years of experience
 // --------------------------------------------------------
 function detectYearsExp(rawText) {
-  const m = rawText.match(/(\d+)\+?\s*(?:years?|роки?|рік)\s*(?:of\s*experience|досвіду)?/i);
+  // Try explicit "X years of experience" first
+  const m = rawText.match(/(\d+)\+?\s*(?:years?|роки?|років|рік)\s*(?:of\s*(?:experience|досвіду)|досвіду)?/i);
   if (m) return parseInt(m[1]);
-  const dates = (rawText.match(/\d{4}\s*[-–]\s*(?:\d{4}|present|current|нині|досі)/gi) || []).length;
-  return dates >= 3 ? 5 : dates === 2 ? 3 : dates === 1 ? 1 : 2;
+
+  // Calculate from date ranges
+  const dateRanges = rawText.match(/((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2}|present|current|нині|досі|сьогодні|today)/gi);
+  if (dateRanges && dateRanges.length > 0) {
+    const currentYear = new Date().getFullYear();
+    let minStart = currentYear;
+    let maxEnd = 0;
+    for (const range of dateRanges) {
+      const parts = range.split(/\s*[-–]\s*/);
+      const start = parseInt(parts[0]);
+      const endStr = parts[1].toLowerCase();
+      const end = /present|current|нині|досі|сьогодні|today/.test(endStr) ? currentYear : parseInt(endStr);
+      if (!isNaN(start) && start < minStart) minStart = start;
+      if (!isNaN(end) && end > maxEnd) maxEnd = end;
+    }
+    if (maxEnd > minStart) return Math.min(maxEnd - minStart, 30);
+  }
+
+  // Count distinct date entries as fallback
+  const yearEntries = (rawText.match(/\b(19|20)\d{2}\b/g) || []).length;
+  return yearEntries >= 6 ? 5 : yearEntries >= 4 ? 3 : yearEntries >= 2 ? 2 : 1;
 }
 
 // --------------------------------------------------------
@@ -1153,66 +1219,169 @@ function detectYearsExp(rawText) {
 function rewriteResume(parsed, matched, missing, jobText) {
   const jobTitle = detectJobTitle(jobText);
   const years = detectYearsExp(parsed.raw);
-  const level = years >= 5 ? 'Senior' : years >= 3 ? 'Middle' : 'Junior';
-  const topMatched = matched.slice(0, 6);
-  const topMissing = missing.slice(0, 5);
-  const rawLines = parsed.raw.split('\n').map(l => l.trim()).filter(Boolean);
-
-  const inferredExperience = rawLines
-    .filter(l => /(\b(19|20)\d{2}\b|present|current|нині|досі|developer|engineer|manager|analyst|розробник|інженер|менеджер|аналітик)/i.test(l))
-    .slice(0, 14)
-    .join('\n');
-
-  const inferredEducation = rawLines
-    .filter(l => /(education|освіта|університет|university|college|інститут|бакалавр|магістр|degree|bachelor|master)/i.test(l))
-    .slice(0, 10)
-    .join('\n');
+  const topMatched = matched.slice(0, 8);
+  const topMissing = missing.slice(0, 6);
 
   // --- Summary ---
-  let newSummary = parsed.summary;
-  if (!newSummary || newSummary.length < 60) {
-    newSummary =
-      `${level}-спеціаліст з ${years}+ роками досвіду, що претендує на роль ${jobTitle}. ` +
-      (topMatched.length > 0 ? `Підтверджені компетенції: ${topMatched.join(', ')}. ` : '') +
-      'Орієнтований на результат, командну роботу та постійний професійний розвиток.';
+  let newSummary;
+  const hasOriginalSummary = parsed.summary && parsed.summary.trim().length >= 40;
+
+  if (hasOriginalSummary) {
+    // Use original summary, append job alignment
+    newSummary = parsed.summary.trim();
+    if (!newSummary.toLowerCase().includes(jobTitle.toLowerCase())) {
+      newSummary += `\nЦільова позиція: ${jobTitle}.`;
+    }
+    if (topMatched.length > 0) {
+      newSummary += `\nКлючові компетенції: ${topMatched.join(', ')}.`;
+    }
+    if (newSummary.length > 600) newSummary = newSummary.slice(0, 597) + '...';
   } else {
-    // Prepend job-title alignment sentence
-    newSummary = `${level}-спеціаліст, зацікавлений у ролі ${jobTitle}. ` + newSummary;
+    // Build summary from scratch — but more natural, not templated
+    const levelPrefix = years >= 8 ? 'Досвідчений' : years >= 5 ? 'Кваліфікований' : years >= 3 ? 'Фаховий' : 'Мотивований';
+    const parts = [];
+    parts.push(`${levelPrefix} спеціаліст з ${years}+ роками професійного досвіду.`);
+    if (topMatched.length >= 3) {
+      parts.push(`Експертиза: ${topMatched.slice(0, 5).join(', ')}.`);
+    }
+    parts.push(`Зацікавлений у позиції ${jobTitle}.`);
+    if (parsed.summary) {
+      // Append whatever original content exists
+      parts.push(parsed.summary.trim());
+    }
+    newSummary = parts.join(' ');
     if (newSummary.length > 500) newSummary = newSummary.slice(0, 497) + '...';
   }
 
   // --- Skills ---
-  const origSkillTokens = parsed.skills
-    .split(/[\n,•\-|\/]/)
+  // Extract individual skill tokens from parsed skills section
+  const origSkillLines = parsed.skills
+    .split('\n')
+    .map(l => l.replace(/^[•\-\*→]\s*/, '').trim())
+    .filter(Boolean);
+
+  const origSkillTokens = origSkillLines
+    .flatMap(l => l.split(/[,|\/]/))
     .map(s => s.trim())
-    .filter(s => s.length > 1 && s.length < 45);
+    .filter(s => s.length > 1 && s.length < 50);
 
-  const matchedSkills = topMatched;
-  const restSkills = origSkillTokens.filter(s => !topMatched.some(m => m.toLowerCase() === s.toLowerCase()));
-  let newSkills = '';
-  if (matchedSkills.length > 0) newSkills += `Ключові (з вакансії): ${matchedSkills.join(', ')}\n`;
-  if (restSkills.length > 0) newSkills += `Додаткові: ${restSkills.join(', ')}\n`;
-  if (topMissing.length > 0) newSkills += `Рекомендовано додати: ${topMissing.join(', ')}`;
-  newSkills = newSkills.trim();
+  // Matched skills = only those that are actual tech/tool terms found in resume
+  const matchedAsSkills = topMatched.filter(kw =>
+    origSkillTokens.some(s => s.toLowerCase().includes(kw.toLowerCase()) || kw.toLowerCase().includes(s.toLowerCase()))
+  );
 
-  const finalExperience = parsed.experience && parsed.experience.trim() ? parsed.experience.trim() : inferredExperience;
-  const finalEducation = parsed.education && parsed.education.trim() ? parsed.education.trim() : inferredEducation;
+  // Other matched keywords (not necessarily skills)
+  const matchedKeywords = topMatched.filter(kw => !matchedAsSkills.includes(kw));
+
+  // Rest of original skills not in matched
+  const restSkills = origSkillTokens.filter(s =>
+    !matchedAsSkills.some(m => m.toLowerCase() === s.toLowerCase())
+  );
+
+  const skillSections = [];
+  if (matchedAsSkills.length > 0) {
+    skillSections.push('Пріоритетні (з вакансії):\n  • ' + matchedAsSkills.join('\n  • '));
+  }
+  if (restSkills.length > 0) {
+    skillSections.push('Додаткові:\n  • ' + restSkills.join('\n  • '));
+  }
+  if (matchedKeywords.length > 0) {
+    skillSections.push('Відповідність вакансії:\n  • ' + matchedKeywords.join('\n  • '));
+  }
+  if (topMissing.length > 0) {
+    skillSections.push('Рекомендовано освоїти:\n  • ' + topMissing.join('\n  • '));
+  }
+  const newSkills = skillSections.join('\n\n');
+
+  // --- Experience & Education: preserve original, don't dump raw ---
+  const finalExperience = parsed.experience && parsed.experience.trim().length > 10
+    ? parsed.experience.trim()
+    : inferExperienceFromRaw(parsed.raw);
+
+  const finalEducation = parsed.education && parsed.education.trim().length > 10
+    ? parsed.education.trim()
+    : inferEducationFromRaw(parsed.raw);
 
   return {
-    name: parsed.name || 'Ваше Ім\'я',
+    name: parsed.name || '',
     contact: parsed.contact,
     summary: newSummary,
-    skills: newSkills || parsed.skills,
-    experience: finalExperience || 'Додайте 3-5 пунктів досвіду роботи у форматі: роль, компанія, період, ключові досягнення.',
-    education: finalEducation || 'Додайте освіту: навчальний заклад, спеціальність, ступінь, роки навчання.',
+    skills: newSkills || parsed.skills || 'Додайте навички, релевантні до цільової позиції.',
+    experience: finalExperience,
+    education: finalEducation,
     other: parsed.other,
   };
+}
+
+// --------------------------------------------------------
+// INFERENCE HELPERS — extract sections from raw text when headings missing
+// --------------------------------------------------------
+function inferExperienceFromRaw(rawText) {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const experienceLines = [];
+  let collecting = false;
+
+  for (const line of lines) {
+    // Detect experience-like content: date ranges, company-like patterns
+    const hasDateRange = /\b(19|20)\d{2}\s*[-–]\s*((19|20)\d{2}|present|current|нині|досі)/i.test(line);
+    const hasJobKeywords = /\b(developer|engineer|manager|analyst|designer|architect|lead|розробник|інженер|менеджер|аналітик|дизайнер|компанія|company|team|проєкт|project)\b/i.test(line);
+    const hasBulletPoint = /^[•\-\*→]/.test(line);
+
+    if (hasDateRange) collecting = true;
+    if (collecting && (hasDateRange || hasJobKeywords || hasBulletPoint)) {
+      experienceLines.push(line);
+    }
+    if (experienceLines.length >= 20) break;
+  }
+
+  if (experienceLines.length > 0) return experienceLines.join('\n');
+  return '';
+}
+
+function inferEducationFromRaw(rawText) {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const eduLines = [];
+
+  for (const line of lines) {
+    if (/(університет|university|college|інститут|institute|академія|academy|бакалавр|магістр|bachelor|master|phd|degree|диплом|КПІ|КНУ|ЛНУ|ХНУ|ОНУ|НаУКМА|освіта|education)/i.test(line)) {
+      eduLines.push(line);
+    }
+    if (eduLines.length >= 10) break;
+  }
+
+  if (eduLines.length > 0) return eduLines.join('\n');
+  return '';
 }
 
 // --------------------------------------------------------
 // RENDER ADAPTED RESUME PREVIEW (HTML)
 // --------------------------------------------------------
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function formatBodyAsHtml(text) {
+  if (!text) return '';
+  const lines = text.split('\n');
+  let html = '';
+  let inList = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (inList) { html += '</ul>'; inList = false; }
+      continue;
+    }
+    const isBullet = /^[•\-\*→▹▸▪●]\s*/.test(trimmed);
+    if (isBullet) {
+      if (!inList) { html += '<ul class="rp-list">'; inList = true; }
+      html += `<li>${esc(trimmed.replace(/^[•\-\*→▹▸▪●]\s*/, ''))}</li>`;
+    } else {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<p class="rp-line">${esc(trimmed)}</p>`;
+    }
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
 
 function renderResumePreview(adapted) {
   const card = document.getElementById('adaptedResumeCard');
@@ -1232,10 +1401,10 @@ function renderResumePreview(adapted) {
   if (adapted.contact) html += `<div class="rp-contact">${esc(adapted.contact)}</div>`;
 
   for (const s of secs) {
-    if (!s.body) continue;
+    if (!s.body || !s.body.trim()) continue;
     html += `<div class="rp-section">
       <div class="rp-section-title">${s.icon} ${s.title}</div>
-      <div class="rp-section-body">${esc(s.body)}</div>
+      <div class="rp-section-body">${formatBodyAsHtml(s.body)}</div>
     </div>`;
   }
   preview.innerHTML = html;
@@ -1313,12 +1482,22 @@ async function exportDOCX(adapted) {
     } : undefined,
   });
 
-  const body = (text) => text.split('\n').map(line =>
-    new Paragraph({
-      children: [new TextRun({ text: line, size: 20, font: 'Calibri' })],
-      spacing: { after: 40 },
-    })
-  );
+  const bodyParagraphs = (text) => {
+    const lines = text.split('\n');
+    const result = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const isBullet = /^[•\-\*→▹▸▪●]\s*/.test(trimmed);
+      const cleanText = isBullet ? trimmed.replace(/^[•\-\*→▹▸▪●]\s*/, '') : trimmed;
+      result.push(new Paragraph({
+        children: [new TextRun({ text: cleanText, size: 20, font: 'Calibri' })],
+        spacing: { after: isBullet ? 20 : 40 },
+        bullet: isBullet ? { level: 0 } : undefined,
+      }));
+    }
+    return result;
+  };
 
   // Name
   if (adapted.name) children.push(heading(adapted.name, 'title'));
@@ -1341,7 +1520,7 @@ async function exportDOCX(adapted) {
   for (const sec of sections) {
     if (!sec.text) continue;
     children.push(heading(sec.title, 'h2'));
-    children.push(...body(sec.text));
+    children.push(...bodyParagraphs(sec.text));
   }
 
   const doc = new Document({ sections: [{ children }] });
@@ -1469,7 +1648,11 @@ async function exportPDF(adapted) {
     if (!sec.text) continue;
     addSectionTitle(sec.title);
     for (const line of sec.text.split('\n')) {
-      if (line.trim()) addLine(line, { size: 9.5, spacing: 3 });
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const isBullet = /^[•\-\*→▹▸▪●]\s*/.test(trimmed);
+      const cleanText = isBullet ? '• ' + trimmed.replace(/^[•\-\*→▹▸▪●]\s*/, '') : trimmed;
+      addLine(cleanText, { size: 9.5, spacing: isBullet ? 2 : 3 });
     }
   }
 

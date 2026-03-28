@@ -1588,8 +1588,34 @@ body {
   font-size: 0.83rem;
   color: var(--text-muted);
   line-height: 1.65;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
+}
+
+.rp-section-body .rp-line {
+  margin: 0 0 4px;
+  line-height: 1.6;
+}
+
+.rp-section-body .rp-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 8px;
+}
+
+.rp-section-body .rp-list li {
+  padding: 2px 0 2px 16px;
+  position: relative;
+  line-height: 1.55;
+  font-size: 0.82rem;
+}
+
+.rp-section-body .rp-list li::before {
+  content: '•';
+  position: absolute;
+  left: 2px;
+  color: var(--primary-light);
+  font-weight: 700;
 }
 
 /* Export row (format selector + download button) */
