@@ -104,40 +104,88 @@ const FORMAT_RISKS = [
 ];
 
 // --------------------------------------------------------
-// TOKENIZER
+// TECH ALIAS MAP — normalizes common variations
+// --------------------------------------------------------
+const TECH_ALIASES = {
+  'js': 'javascript', 'ts': 'typescript', 'py': 'python',
+  'reactjs': 'react', 'react.js': 'react', 'vuejs': 'vue', 'vue.js': 'vue',
+  'angularjs': 'angular', 'angular.js': 'angular',
+  'nodejs': 'node.js', 'node': 'node.js',
+  'dotnet': '.net', 'net': '.net', 'netcore': '.net',
+  'postgres': 'postgresql', 'postgre': 'postgresql',
+  'mongo': 'mongodb', 'k8s': 'kubernetes',
+  'ci/cd': 'ci cd', 'ci\\cd': 'ci cd',
+  'aws': 'aws', 'gcp': 'gcp', 'azure': 'azure',
+};
+
+function normalizeTerm(term) {
+  let t = term.toLowerCase().trim();
+  if (TECH_ALIASES[t]) return TECH_ALIASES[t];
+  // Strip trailing s for simple plurals (but not for "js", "css", etc.)
+  if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss') && !/^[a-z]{2}s$/.test(t)) {
+    const stripped = t.slice(0, -1);
+    if (TECH_ALIASES[stripped]) return TECH_ALIASES[stripped];
+  }
+  return t;
+}
+
+// --------------------------------------------------------
+// TOKENIZER — preserves dots/hyphens in tech terms
 // --------------------------------------------------------
 function tokenize(text) {
   return text
     .toLowerCase()
-    .replace(/[^a-zа-яёіїєґ0-9\s+#.]/gi, ' ')
+    .replace(/[^a-zа-яёіїєґ0-9\s+#.\-]/gi, ' ')
     .split(/\s+/)
     .filter(w => w.length >= 2 && !STOP_WORDS.has(w));
 }
 
 // --------------------------------------------------------
-// KEYWORD EXTRACTOR (frequency-based, JD-weighted)
+// KEYWORD EXTRACTOR — signal-based, not frequency-based
 // --------------------------------------------------------
-function extractKeywords(text, topN = 60) {
-  const tokens = tokenize(text);
-  const freq = {};
-  for (const t of tokens) {
-    freq[t] = (freq[t] || 0) + 1;
+function extractKeywords(text, topN = 40) {
+  const rawTokens = tokenize(text);
+
+  // Score each unique term by signal strength
+  const termScores = {};
+
+  for (const token of rawTokens) {
+    const normalized = normalizeTerm(token);
+    if (normalized.length < 2) continue;
+    if (!termScores[normalized]) termScores[normalized] = { score: 0, original: token };
+
+    let score = 1;
+    // Bonus for technical patterns: contains dots, hyphens, or is a known acronym
+    if (/[.\-]/.test(token) || /^[A-Z+#]+$/.test(token)) score += 3;
+    // Bonus for capitalized terms in original (likely proper nouns/tech)
+    if (/[A-Z]/.test(token) && token.length <= 20) score += 1;
+    // Bonus for known tech terms
+    if (TECH_ALIASES[token]) score += 2;
+
+    termScores[normalized].score += score;
   }
 
-  // Also include 2-grams for compound terms (e.g., "machine learning")
-  const words = text.toLowerCase().match(/[a-zа-яёіїєґ0-9+#.]{2,}/gi) || [];
-  for (let i = 0; i < words.length - 1; i++) {
-    const bigram = `${words[i]} ${words[i + 1]}`;
-    if (!STOP_WORDS.has(words[i]) && !STOP_WORDS.has(words[i + 1]) && words[i].length > 2 && words[i + 1].length > 2) {
-      freq[bigram] = (freq[bigram] || 0) + 1;
+  // Also extract 2-grams and 3-grams
+  const words = text.toLowerCase().match(/[a-zа-яёіїєґ0-9+#.\-]{2,}/gi) || [];
+  for (let ngram = 2; ngram <= 3; ngram++) {
+    for (let i = 0; i <= words.length - ngram; i++) {
+      const gramWords = words.slice(i, i + ngram);
+      // Skip if any word is a stop word (except short tech terms)
+      if (gramWords.some(w => STOP_WORDS.has(w) && !/^[a-z+#.]+$/.test(w))) continue;
+      const phrase = gramWords.join(' ');
+      if (phrase.length < 4 || phrase.length > 40) continue;
+      const normalized = normalizeTerm(phrase);
+      if (!termScores[normalized]) termScores[normalized] = { score: 0, original: phrase };
+      termScores[normalized].score += ngram + 1; // 2-gram = 3pts, 3-gram = 4pts
     }
   }
 
-  return Object.entries(freq)
-    .filter(([k, v]) => v >= 1 && k.length >= 2)
-    .sort((a, b) => b[1] - a[1])
+  // Sort by score descending, take top N
+  return Object.entries(termScores)
+    .filter(([, v]) => v.score >= 1)
+    .sort((a, b) => b[1].score - a[1].score)
     .slice(0, topN)
-    .map(([k]) => k);
+    .map(([k, v]) => ({ key: k, original: v.original, score: v.score }));
 }
 
 // --------------------------------------------------------
@@ -168,19 +216,49 @@ function checkFormat(resumeText) {
 // MAIN ATS SCORER
 // Returns { score, kwScore, secScore, fmtScore, matched, missing, sections, formatIssues }
 // --------------------------------------------------------
+function keywordMatchesResume(keyword, resumeLower) {
+  const kw = keyword.toLowerCase().trim();
+  if (!kw || kw.length < 2) return false;
+
+  // Exact word-boundary match
+  const escaped = escapeRegex(kw);
+  if (new RegExp(`\\b${escaped}\\b`, 'i').test(resumeLower)) return true;
+
+  // Substring match for compound terms (e.g., "react" in "reactjs")
+  if (kw.length >= 3 && resumeLower.includes(kw)) return true;
+
+  // Check normalized aliases
+  const normalized = normalizeTerm(kw);
+  if (normalized !== kw) {
+    const normEscaped = escapeRegex(normalized);
+    if (new RegExp(`\\b${normEscaped}\\b`, 'i').test(resumeLower)) return true;
+    if (normalized.length >= 3 && resumeLower.includes(normalized)) return true;
+  }
+
+  // Check alias expansion (e.g., "js" -> "javascript")
+  for (const [alias, full] of Object.entries(TECH_ALIASES)) {
+    if (alias === kw || full === kw) {
+      const counterpart = alias === kw ? full : alias;
+      const cpEscaped = escapeRegex(counterpart);
+      if (new RegExp(`\\b${cpEscaped}\\b`, 'i').test(resumeLower)) return true;
+    }
+  }
+
+  return false;
+}
+
 function scoreATS(resumeText, jobText) {
-  const jdKeywords = extractKeywords(jobText, 60);
+  const jdKeywords = extractKeywords(jobText, 40);
   const resumeLower = resumeText.toLowerCase();
 
-  // Keyword matching (case + partial)
+  // Keyword matching
   const matched = [];
   const missing = [];
   for (const kw of jdKeywords) {
-    const pat = new RegExp(`\\b${escapeRegex(kw)}`, 'i');
-    if (pat.test(resumeLower)) {
-      matched.push(kw);
+    if (keywordMatchesResume(kw.key, resumeLower) || keywordMatchesResume(kw.original, resumeLower)) {
+      matched.push(kw.original);
     } else {
-      missing.push(kw);
+      missing.push(kw.original);
     }
   }
 
@@ -1531,48 +1609,46 @@ async function exportDOCX(adapted) {
 // --------------------------------------------------------
 // PDF EXPORT (jsPDF)
 // --------------------------------------------------------
-const PDF_FONT_URLS = {
-  normal: 'https://cdn.jsdelivr.net/gh/google/fonts/ofl/notosans/NotoSans-Regular.ttf',
-  bold: 'https://cdn.jsdelivr.net/gh/google/fonts/ofl/notosans/NotoSans-Bold.ttf',
-};
 
 let _pdfFontCache = null;
+let _pdfFontLoadFailed = false;
 
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = '';
+function streamArrayBufferToBase64(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const chunkSize = 32768;
+  let result = '';
   for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, chunk);
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    let binary = '';
+    for (let j = 0; j < chunk.length; j++) {
+      binary += String.fromCharCode(chunk[j]);
+    }
+    result += btoa(binary);
   }
-  return btoa(binary);
+  return result;
 }
 
 async function ensurePdfUnicodeFonts(doc) {
+  if (_pdfFontLoadFailed) throw new Error('PDF_FONT_LOAD_FAILED');
   if (!_pdfFontCache) {
-    const [regResp, boldResp] = await Promise.all([
-      fetch(PDF_FONT_URLS.normal, { signal: createTimeoutSignal(15000) }),
-      fetch(PDF_FONT_URLS.bold, { signal: createTimeoutSignal(15000) }),
-    ]);
-
-    if (!regResp.ok || !boldResp.ok) {
-      throw new Error('Не вдалося завантажити PDF-шрифт.');
+    const FONT_URL = 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf';
+    try {
+      const resp = await fetch(FONT_URL, { signal: AbortSignal.timeout(25000) });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const buf = await resp.arrayBuffer();
+      const base64 = streamArrayBufferToBase64(buf);
+      _pdfFontCache = { normal: base64, bold: base64 };
+    } catch (e) {
+      _pdfFontLoadFailed = true;
+      console.warn('[ATSAnalyzer] PDF font load failed:', e.message);
+      throw new Error('PDF_FONT_LOAD_FAILED');
     }
-
-    const [regBuffer, boldBuffer] = await Promise.all([regResp.arrayBuffer(), boldResp.arrayBuffer()]);
-    _pdfFontCache = {
-      normal: arrayBufferToBase64(regBuffer),
-      bold: arrayBufferToBase64(boldBuffer),
-    };
   }
-
   const fontList = typeof doc.getFontList === 'function' ? doc.getFontList() : {};
   if (!fontList.NotoSans) {
-    doc.addFileToVFS('NotoSans-Regular.ttf', _pdfFontCache.normal);
-    doc.addFont('NotoSans-Regular.ttf', 'NotoSans', 'normal');
-    doc.addFileToVFS('NotoSans-Bold.ttf', _pdfFontCache.bold);
-    doc.addFont('NotoSans-Bold.ttf', 'NotoSans', 'bold');
+    doc.addFileToVFS('NotoSans.ttf', _pdfFontCache.normal);
+    doc.addFont('NotoSans.ttf', 'NotoSans', 'normal');
+    doc.addFont('NotoSans.ttf', 'NotoSans', 'bold');
   }
 }
 
@@ -1584,8 +1660,12 @@ async function exportPDF(adapted) {
   let fontFamily = 'helvetica';
 
   if (requiresUnicode) {
-    await ensurePdfUnicodeFonts(doc);
-    fontFamily = 'NotoSans';
+    try {
+      await ensurePdfUnicodeFonts(doc);
+      fontFamily = 'NotoSans';
+    } catch (e) {
+      console.warn('[ATSAnalyzer] Falling back to helvetica — Cyrillic will not render. Use DOCX for Ukrainian text.');
+    }
   }
 
   const ML = 18, MR = 18, MT = 18;
@@ -1625,12 +1705,9 @@ async function exportPDF(adapted) {
     doc.setFont(fontFamily, 'normal');
   }
 
-  // Name
   if (adapted.name) addLine(adapted.name, { size: 22, bold: true, align: 'center', color: [15, 10, 45], spacing: 3 });
-  // Contact
   if (adapted.contact) addLine(adapted.contact, { size: 9, align: 'center', color: [110, 110, 140], spacing: 6 });
 
-  // Divider
   doc.setDrawColor(200, 200, 220);
   doc.setLineWidth(0.2);
   doc.line(ML, y, PW - MR, y);
