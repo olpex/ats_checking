@@ -98,9 +98,12 @@ const SECTIONS = [
 // FORMATTING RISK PATTERNS
 // --------------------------------------------------------
 const FORMAT_RISKS = [
-  { pattern: /\|.{1,40}\|/, msg: 'Виявлено символи таблиці', severity: 'high' },
-  { pattern: /\t{2,}/, msg: 'Множинні табуляції — можлива колонкова верстка', severity: 'medium' },
-  { pattern: /_{5,}/, msg: 'Лінійні роздільники можуть збити парсер', severity: 'low' },
+  { key: 'tables', pattern: /\|.{1,40}\|/, msg: 'Виявлено символи таблиці', severity: 'high' },
+  { key: 'tabs', pattern: /\t{2,}/, msg: 'Множинні табуляції — можлива колонкова верстка', severity: 'medium' },
+  { key: 'separators', pattern: /_{5,}/, msg: 'Лінійні роздільники можуть збити парсер', severity: 'low' },
+  { key: 'links', pattern: /https?:\/\/\S+/i, msg: 'Надлишкова кількість посилань може зашумлювати резюме', severity: 'medium' },
+  { key: 'longline', pattern: /.{220,}/, msg: 'Дуже довгі рядки ускладнюють парсинг і читання', severity: 'medium' },
+  { key: 'graphic_noise', pattern: /\[!\[image|social-icons|cdn-cgi|company-logo/i, msg: 'Виявлено технічний шум із веб-сторінки', severity: 'high' },
 ];
 
 // --------------------------------------------------------
@@ -141,20 +144,35 @@ function isNoiseKeyword(term) {
   return false;
 }
 
+const NOISE_LINE_PATTERNS = [
+  /^title:\s*/i,
+  /^url source:\s*/i,
+  /^markdown content:\s*$/i,
+  /^сервіс пошуку роботи/i,
+  /^резюме кандидата розміщено за адресою/i,
+  /(?:^|\s)(до пошуку|відгукнутись)(?:\s|$)/i,
+  /social-icons|cdn-cgi|company-logo|cf-rabota|image\s*\d+/i,
+  /перевірка надійності підключення|перевірити безпеку вашого з.?єднання|перш ніж продовжити/i,
+  /warning:\s*target url returned error 403/i,
+];
+
 function isResumeNoiseLine(line) {
   const t = String(line || '').trim();
   const lower = t.toLowerCase();
   if (!t) return true;
-  if (/^сервіс пошуку роботи/i.test(lower)) return true;
-  if (/^резюме кандидата розміщено за адресою/i.test(lower)) return true;
-  if (/^до пошуку$|^відгукнутись$/i.test(lower)) return true;
-  if (/social-icons|cdn-cgi|company-logo|^\[!\[image/i.test(lower)) return true;
+  if (NOISE_LINE_PATTERNS.some((pat) => pat.test(t))) return true;
+  if (/^\[!\[image/i.test(lower)) return true;
+  if (/^#\s*(robota\.ua|work\.ua|до пошуку|відгукнутись)/i.test(t)) return true;
+  if (/^\*\*[^*]{1,80}\*\*$/.test(t) && /(?:робот|job|vacancy|ваканс)/i.test(t)) return true;
   if ((lower.match(/https?:\/\//g) || []).length >= 2) return true;
+  if ((t.match(/\b(?:png|jpg|jpeg|svg|webp)\b/gi) || []).length >= 2) return true;
   return false;
 }
 
 function sanitizeSectionText(text, maxLines = 80) {
   return String(text || '')
+    .replace(/(місяц[івя]\)|рок[иів]\)|нині\)|досі\))(?=[A-ZА-ЯІЇЄҐ])/g, '$1\n')
+    .replace(/(https?:\/\/\S+)(?=[A-ZА-ЯІЇЄҐ])/g, '$1\n')
     .split('\n')
     .map(l => l.trim())
     .filter(Boolean)
@@ -163,6 +181,43 @@ function sanitizeSectionText(text, maxLines = 80) {
     .join('\n')
     .trim();
 }
+
+function sanitizeResumeSource(text) {
+  return String(text || '')
+    .replace(/\r/g, '')
+    .replace(/\[!\[.*?\]\(.*?\)\]/g, ' ')
+    .replace(/\[(.*?)\]\((https?:\/\/.*?)\)/g, '$1')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .filter(l => !isResumeNoiseLine(l))
+    .join('\n')
+    .trim();
+}
+
+function sanitizeJobSource(text) {
+  return cleanExtractedText(String(text || ''))
+    .replace(/\[!\[.*?\]\(.*?\)\]/g, ' ')
+    .replace(/\[(.*?)\]\((https?:\/\/.*?)\)/g, '$1')
+    .replace(/(?:^|\n)\s*#+\s*/g, '\n')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .filter(l => !isResumeNoiseLine(l))
+    .filter(l => !/^(share|apply|відгук|поділитись|опубліковано|published)\b/i.test(l))
+    .slice(0, 260)
+    .join('\n')
+    .trim();
+}
+
+const ACTION_VERBS = [
+  'implemented', 'designed', 'built', 'optimized', 'led', 'managed', 'delivered', 'created',
+  'developed', 'improved', 'automated', 'deployed', 'migrated', 'configured', 'maintained',
+  'впровадив', 'впровадила', 'створив', 'створила', 'оптимізував', 'оптимізувала', 'налаштував',
+  'налаштувала', 'розробив', 'розробила', 'керував', 'керувала', 'покращив', 'покращила',
+];
+
+const METRIC_PATTERN = /\b\d+(?:[.,]\d+)?\s*(?:%|процент|відсотк|ms|sec|seconds|год|годин|тиж|місяц|рок|users?|користувач|клієнт|проєкт|projects?)\b/i;
 
 // --------------------------------------------------------
 // TOKENIZER — preserves dots/hyphens in tech terms
@@ -245,7 +300,7 @@ function checkFormat(resumeText) {
   for (const risk of FORMAT_RISKS) {
     risk.pattern.lastIndex = 0;
     if (risk.pattern.test(resumeText)) {
-      issues.push({ msg: risk.msg, severity: risk.severity });
+      issues.push({ key: risk.key, msg: risk.msg, severity: risk.severity });
     }
   }
   return issues;
@@ -286,9 +341,186 @@ function keywordMatchesResume(keyword, resumeLower) {
   return false;
 }
 
+function splitResumeZones(resumeText) {
+  const parsed = parseResumeSections(resumeText);
+  return {
+    summary: (parsed.summary || '').toLowerCase(),
+    skills: (parsed.skills || '').toLowerCase(),
+    experience: (parsed.experience || '').toLowerCase(),
+    education: (parsed.education || '').toLowerCase(),
+    other: (parsed.other || '').toLowerCase(),
+  };
+}
+
+function countKeywordHitsByZone(keyword, zones) {
+  const kw = keyword.toLowerCase();
+  const has = (src) => keywordMatchesResume(kw, src);
+  return {
+    summary: has(zones.summary),
+    skills: has(zones.skills),
+    experience: has(zones.experience),
+    education: has(zones.education),
+    other: has(zones.other),
+  };
+}
+
+function computeContextScore(matched, resumeText, zones) {
+  if (!matched.length) return 0;
+  const lower = resumeText.toLowerCase();
+  const lines = resumeText.split('\n').map(l => l.trim()).filter(Boolean);
+  let scoreSum = 0;
+
+  for (const kw of matched) {
+    const hit = countKeywordHitsByZone(kw, zones);
+    let zoneWeight = 0;
+    if (hit.summary) zoneWeight += 1.25;
+    if (hit.experience) zoneWeight += 1.15;
+    if (hit.skills) zoneWeight += 1.0;
+    if (hit.education) zoneWeight += 0.75;
+    if (hit.other) zoneWeight += 0.5;
+
+    let evidence = 0;
+    for (const line of lines) {
+      if (!keywordMatchesResume(kw, line.toLowerCase())) continue;
+      if (ACTION_VERBS.some(v => line.toLowerCase().includes(v))) evidence += 0.8;
+      if (METRIC_PATTERN.test(line)) evidence += 0.8;
+      if (evidence >= 1.6) break;
+    }
+
+    if (lower.includes(normalizeTerm(kw))) evidence += 0.2;
+    scoreSum += Math.min(zoneWeight + evidence, 3.2);
+  }
+
+  return Math.round((scoreSum / (matched.length * 3.2)) * 100);
+}
+
+function computeRecencyScore(matched, resumeText) {
+  if (!matched.length) return 0;
+  const lines = resumeText.split('\n').map(l => l.trim()).filter(Boolean);
+  const expStart = lines.findIndex(l => /\b(experience|досвід|work history|employment)\b/i.test(l));
+  const experienceLines = expStart >= 0 ? lines.slice(expStart + 1) : lines;
+  const recentWindow = experienceLines.slice(0, 24).join('\n').toLowerCase();
+  const wholeExp = experienceLines.join('\n').toLowerCase();
+  if (!wholeExp) return 0;
+
+  let recentHits = 0;
+  let anyHits = 0;
+  for (const kw of matched) {
+    if (keywordMatchesResume(kw, wholeExp)) anyHits += 1;
+    if (keywordMatchesResume(kw, recentWindow)) recentHits += 1;
+  }
+  if (anyHits === 0) return 0;
+  return Math.round((recentHits / anyHits) * 100);
+}
+
+function computeStuffingPenalty(resumeText) {
+  const words = tokenize(resumeText).filter(t => !isNoiseKeyword(t));
+  if (!words.length) return 0;
+  const freq = {};
+  for (const w of words) freq[w] = (freq[w] || 0) + 1;
+  const maxFreq = Math.max(...Object.values(freq));
+  const ratio = maxFreq / words.length;
+  if (ratio < 0.03) return 0;
+  if (ratio < 0.06) return 4;
+  if (ratio < 0.09) return 9;
+  return 14;
+}
+
+function normalizeTitleForMatch(title) {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^a-zа-яёіїєґ0-9\s-]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function computeTitleAlignmentScore(jobText, resumeText) {
+  const title = normalizeTitleForMatch(detectJobTitle(jobText));
+  if (!title || title === 'спеціаліст') return 50;
+  const resumeNorm = normalizeTitleForMatch(resumeText);
+  if (!resumeNorm) return 0;
+  if (resumeNorm.includes(title)) return 100;
+
+  const tokens = title.split(' ').filter(t => t.length > 2);
+  if (!tokens.length) return 40;
+  let hit = 0;
+  for (const t of tokens) {
+    if (resumeNorm.includes(t)) hit += 1;
+  }
+  return Math.round((hit / tokens.length) * 100);
+}
+
+function extractKnockoutCandidates(jobText) {
+  const lines = jobText.split('\n').map(l => l.trim()).filter(Boolean);
+  const candidates = [];
+  for (const line of lines) {
+    if (/(must|required|mandatory|обов.?язков|вимоги|must-have|потрібно|необхідно)/i.test(line)) {
+      candidates.push(line);
+    }
+  }
+  return candidates.slice(0, 18);
+}
+
+function detectKnockoutRisks(jobText, resumeText) {
+  const lowerJob = jobText.toLowerCase();
+  const lowerResume = resumeText.toLowerCase();
+  const risks = [];
+
+  const yearsReq = lowerJob.match(/(\d+)\+?\s*(?:years?|роки?|років|рік)/i);
+  if (yearsReq) {
+    const requiredYears = parseInt(yearsReq[1], 10);
+    const haveYears = detectYearsExp(resumeText);
+    risks.push({
+      label: `${requiredYears}+ років релевантного досвіду`,
+      status: haveYears >= requiredYears ? 'covered' : 'likely_missing',
+      detail: `Виявлено: ${haveYears} років`,
+    });
+  }
+
+  if (/(on-?site|office|в офісі|на місці|тільки офіс)/i.test(lowerJob)) {
+    const hasLocation = /(lviv|kyiv|к?иїв|львів|location|місто|city)/i.test(lowerResume);
+    risks.push({
+      label: 'Формат роботи on-site / office',
+      status: hasLocation ? 'unclear' : 'likely_missing',
+      detail: hasLocation ? 'Локація є, але готовність до on-site неявна' : 'Немає явного підтвердження готовності',
+    });
+  }
+
+  if (/(work authorization|visa|sponsorship|дозвіл на роботу|право на працю)/i.test(lowerJob)) {
+    const hasAuth = /(work authorization|дозвіл на роботу|громадянство|citizen|permanent resident)/i.test(lowerResume);
+    risks.push({
+      label: 'Право на працевлаштування / віза',
+      status: hasAuth ? 'covered' : 'unclear',
+      detail: hasAuth ? 'Є ознаки підтвердження' : 'Краще уточнити в резюме/супровідному листі',
+    });
+  }
+
+  const mustLines = extractKnockoutCandidates(jobText);
+  const mustTerms = uniqueNonEmpty(
+    mustLines
+      .flatMap(l => extractKeywords(l, 8).map(k => k.original))
+      .filter(t => t.length >= 3 && !isNoiseKeyword(t))
+  ).slice(0, 8);
+
+  for (const t of mustTerms) {
+    const covered = keywordMatchesResume(t, lowerResume);
+    risks.push({
+      label: `Must-have: ${t}`,
+      status: covered ? 'covered' : 'likely_missing',
+      detail: covered ? 'Знайдено в резюме' : 'Не знайдено прямого підтвердження',
+    });
+  }
+
+  return uniqueNonEmpty(risks.map(r => JSON.stringify(r))).map(x => JSON.parse(x)).slice(0, 12);
+}
+
 function scoreATS(resumeText, jobText) {
-  const jdKeywords = extractKeywords(jobText, 40);
-  const resumeLower = resumeText.toLowerCase();
+  const cleanResumeText = sanitizeResumeSource(resumeText);
+  const cleanJobText = sanitizeJobSource(jobText);
+
+  const jdKeywords = extractKeywords(cleanJobText, 40);
+  const resumeLower = cleanResumeText.toLowerCase();
+  const zones = splitResumeZones(cleanResumeText);
 
   // Keyword matching
   const matched = [];
@@ -306,20 +538,56 @@ function scoreATS(resumeText, jobText) {
     : 0;
 
   // Section detection
-  const sections = detectSections(resumeText);
+  const sections = detectSections(cleanResumeText);
   const secTotal = sections.reduce((s, sec) => s + sec.weight, 0);
   const secFound = sections.filter(s => s.found).reduce((s, sec) => s + sec.weight, 0);
   const secScore = Math.round((secFound / secTotal) * 100);
 
   // Format
-  const formatIssues = checkFormat(resumeText);
+  const formatIssues = checkFormat(cleanResumeText);
   const fmtPenalty = Math.min(formatIssues.reduce((s, i) => s + (i.severity === 'high' ? 20 : i.severity === 'medium' ? 10 : 5), 0), 30);
   const fmtScore = Math.max(100 - fmtPenalty, 30);
 
-  // Weighted final score
-  const score = Math.round(kwScore * 0.50 + secScore * 0.30 + fmtScore * 0.20);
+  // Contextual + recency + title + stuffing
+  const contextScore = computeContextScore(matched, cleanResumeText, zones);
+  const recencyScore = computeRecencyScore(matched, cleanResumeText);
+  const titleScore = computeTitleAlignmentScore(cleanJobText, cleanResumeText);
+  const stuffingPenalty = computeStuffingPenalty(cleanResumeText);
+  const knockoutRisks = detectKnockoutRisks(cleanJobText, cleanResumeText);
+  const formatFlags = formatIssues.map(i => ({
+    key: i.key,
+    status: i.severity === 'high' ? 'fail' : i.severity === 'medium' ? 'warn' : 'pass',
+    title: i.msg,
+    detail: i.severity === 'high' ? 'Критичний ризик для ATS-парсингу' : 'Бажано виправити для стабільного парсингу',
+  }));
 
-  return { score, kwScore, secScore, fmtScore, matched, missing, sections, formatIssues };
+  // Weighted final score
+  const baseScore =
+    kwScore * 0.32 +
+    contextScore * 0.22 +
+    recencyScore * 0.14 +
+    secScore * 0.12 +
+    fmtScore * 0.10 +
+    titleScore * 0.10;
+  const knockoutPenalty = knockoutRisks.filter(r => r.status === 'likely_missing').length * 2;
+  const score = Math.max(0, Math.min(100, Math.round(baseScore - stuffingPenalty - knockoutPenalty)));
+
+  return {
+    score,
+    kwScore,
+    secScore,
+    fmtScore,
+    contextScore,
+    recencyScore,
+    titleScore,
+    stuffingPenalty,
+    matched,
+    missing,
+    sections,
+    formatIssues,
+    knockoutRisks,
+    formatFlags,
+  };
 }
 
 function escapeRegex(str) {
@@ -329,7 +597,10 @@ function escapeRegex(str) {
 // --------------------------------------------------------
 // RECOMMENDATION ENGINE
 // --------------------------------------------------------
-function buildRecommendations({ score, kwScore, secScore, fmtScore, matched, missing, sections, formatIssues }) {
+function buildRecommendations({
+  score, kwScore, secScore, fmtScore, contextScore, recencyScore, titleScore,
+  matched, missing, sections, formatIssues, knockoutRisks, stuffingPenalty,
+}) {
   const recs = [];
 
   if (kwScore < 40) {
@@ -397,6 +668,51 @@ function buildRecommendations({ score, kwScore, secScore, fmtScore, matched, mis
       priority: 'high',
       icon: '💬',
       text: `<strong>Порада:</strong> Адаптуйте резюме окремо під кожну вакансію — це найефективніший спосіб підвищити ATS-рейтинг.`,
+    });
+  }
+
+  const knockoutMissing = (knockoutRisks || []).filter(r => r.status === 'likely_missing');
+  const knockoutUnclear = (knockoutRisks || []).filter(r => r.status === 'unclear');
+  if (knockoutMissing.length > 0) {
+    recs.push({
+      priority: 'high',
+      icon: '🛑',
+      text: `<strong>Knockout-ризики:</strong> ${knockoutMissing.slice(0, 3).map(r => r.label).join(', ')}.`,
+    });
+  } else if (knockoutUnclear.length > 0) {
+    recs.push({
+      priority: 'medium',
+      icon: '🟠',
+      text: `<strong>Є неявні вимоги:</strong> ${knockoutUnclear.slice(0, 3).map(r => r.label).join(', ')}. Варто уточнити в резюме.`,
+    });
+  }
+
+  if (contextScore < 55) {
+    recs.push({
+      priority: 'high',
+      icon: '🧠',
+      text: '<strong>Слабкий контекстний доказ навичок.</strong> Додайте буліти у форматі: дія + інструмент + вимірюваний результат.',
+    });
+  }
+  if (recencyScore < 50) {
+    recs.push({
+      priority: 'medium',
+      icon: '🕒',
+      text: '<strong>Низька актуальність досвіду.</strong> Підніміть релевантні технології у верхні (останні) позиції досвіду.',
+    });
+  }
+  if (titleScore < 50) {
+    recs.push({
+      priority: 'medium',
+      icon: '🎯',
+      text: '<strong>Слабкий title alignment.</strong> Додайте цільову назву ролі у Summary/заголовок резюме.',
+    });
+  }
+  if ((stuffingPenalty || 0) > 0) {
+    recs.push({
+      priority: 'medium',
+      icon: '⚖️',
+      text: '<strong>Ознаки keyword stuffing.</strong> Зменште повтори і залиште ключові слова тільки в релевантному контексті.',
     });
   }
 
@@ -932,7 +1248,10 @@ function animateScore(targetScore) {
 // RENDER RESULTS
 // --------------------------------------------------------
 function renderResults(result) {
-  const { score, kwScore, secScore, fmtScore, matched, missing, sections } = result;
+  const {
+    score, kwScore, secScore, fmtScore, contextScore, recencyScore, titleScore,
+    matched, missing, sections, knockoutRisks, formatFlags,
+  } = result;
 
   // Show panel
   document.getElementById('resultsPlaceholder').style.display = 'none';
@@ -948,7 +1267,10 @@ function renderResults(result) {
   // Breakdown bars
   const breakdownData = [
     { label: 'Ключові слова', val: kwScore, color: 'linear-gradient(90deg,#6366f1,#06b6d4)' },
+    { label: 'Контекст', val: contextScore, color: 'linear-gradient(90deg,#10b981,#06b6d4)' },
+    { label: 'Актуальність', val: recencyScore, color: 'linear-gradient(90deg,#0ea5e9,#22c55e)' },
     { label: 'Структура', val: secScore, color: 'linear-gradient(90deg,#8b5cf6,#6366f1)' },
+    { label: 'Title Match', val: titleScore, color: 'linear-gradient(90deg,#f59e0b,#f97316)' },
     { label: 'Форматування', val: fmtScore, color: 'linear-gradient(90deg,#06b6d4,#10b981)' },
   ];
   document.getElementById('scoreBreakdown').innerHTML = breakdownData.map(b => `
@@ -997,19 +1319,53 @@ function renderResults(result) {
       <span class="rec-text">${r.text}</span>
     </div>
   `).join('');
+
+  // Knockout risks
+  const risks = (knockoutRisks || []);
+  document.getElementById('knockoutList').innerHTML = risks.length
+    ? risks.map((r) => `
+      <div class="risk-item ${r.status}">
+        <div class="risk-body">
+          <div class="risk-title">${r.label}</div>
+          <div class="risk-desc">${r.detail || ''}</div>
+        </div>
+      </div>
+    `).join('')
+    : '<div class="risk-item covered"><div class="risk-body"><div class="risk-title">Критичних knockout-ризиків не знайдено</div><div class="risk-desc">Перевірка пройдена.</div></div></div>';
+
+  // ATS readiness checks
+  const readiness = [
+    ...(formatFlags || []),
+    { key: 'noise', status: missing.length > 20 ? 'warn' : 'pass', title: 'Контроль шуму', detail: missing.length > 20 ? 'Багато нерелевантних термінів у порівнянні з JD' : 'Шум у допустимих межах' },
+    { key: 'structure', status: secScore >= 80 ? 'pass' : secScore >= 60 ? 'warn' : 'fail', title: 'Структура ATS', detail: `Покриття секцій: ${secScore}%` },
+    { key: 'coverage', status: kwScore >= 65 ? 'pass' : kwScore >= 45 ? 'warn' : 'fail', title: 'Покриття ключових вимог', detail: `Покриття: ${kwScore}%` },
+  ];
+  document.getElementById('readinessList').innerHTML = readiness.map((r) => `
+    <div class="readiness-item ${r.status}">
+      <div class="readiness-body">
+        <div class="readiness-title">${r.title}</div>
+        <div class="readiness-desc">${r.detail}</div>
+      </div>
+    </div>
+  `).join('');
 }
 
 // --------------------------------------------------------
 // EXPORT / COPY REPORT
 // --------------------------------------------------------
 function copyReport() {
-  const resumeText = document.getElementById('resumeText').value;
-  const jobText = document.getElementById('jobText').value;
+  const resumeTextRaw = document.getElementById('resumeText').value;
+  const jobTextRaw = document.getElementById('jobText').value;
+  const resumeText = sanitizeResumeSource(resumeTextRaw);
+  const jobText = sanitizeJobSource(jobTextRaw);
 
   if (!resumeText || !jobText) return;
 
   const result = scoreATS(resumeText, jobText);
-  const { score, kwScore, secScore, fmtScore, matched, missing, sections } = result;
+  const {
+    score, kwScore, secScore, fmtScore, contextScore, recencyScore, titleScore,
+    matched, missing, sections, knockoutRisks,
+  } = result;
 
   const report = `
 ╔══════════════════════════════════════╗
@@ -1020,6 +1376,9 @@ function copyReport() {
 
 BREAKDOWN:
   🔑 Ключові слова:  ${kwScore}%
+  🧠 Контекст:       ${contextScore}%
+  🕒 Актуальність:   ${recencyScore}%
+  🎯 Title Match:    ${titleScore}%
   📋 Структура:      ${secScore}%
   📄 Форматування:   ${fmtScore}%
 
@@ -1031,6 +1390,9 @@ ${missing.join(' · ')}
 
 СЕКЦІЇ РЕЗЮМЕ:
 ${sections.map(s => `  ${s.found ? '✅' : '❌'} ${s.label}`).join('\n')}
+
+KNOCKOUT RISKS:
+${(knockoutRisks || []).map(r => `  ${r.status === 'covered' ? '✅' : r.status === 'unclear' ? '🟡' : '❌'} ${r.label} — ${r.detail || ''}`).join('\n') || '  ✅ Не виявлено'}
 
 ══════════════════════════════════════
 Сгенеровано ATSAnalyzer
@@ -1083,8 +1445,10 @@ function copyTextToClipboard(text) {
 // MAIN ANALYSIS RUNNER
 // --------------------------------------------------------
 function runAnalysis() {
-  const resumeText = document.getElementById('resumeText').value.trim();
-  const jobText = document.getElementById('jobText').value.trim();
+  const resumeRaw = document.getElementById('resumeText').value;
+  const jobRaw = document.getElementById('jobText').value;
+  const resumeText = sanitizeResumeSource(resumeRaw);
+  const jobText = sanitizeJobSource(jobRaw);
   const errorEl = document.getElementById('errorMsg');
   const btn = document.getElementById('analyzeBtn');
   const btnText = document.getElementById('analyzeBtnText');
@@ -1250,7 +1614,8 @@ const RESUME_SECTION_PATTERNS = [
   { key: 'experience', labels: ['experience', 'досвід', 'work history', 'work experience', 'employment', 'career', 'роботодавець', 'professional experience', 'professional background', 'історія роботи'] },
   { key: 'education', labels: ['education', 'освіта', 'academic', 'навчання', 'university', 'університет', 'academic background', 'qualifications', 'кваліфікації'] },
   { key: 'skills', labels: ['skills', 'навички', 'технології', 'tech stack', 'competencies', 'technologies', 'інструменти', 'tools', 'technical skills', 'hard skills'] },
-  { key: 'other', labels: ['languages', 'мови', 'certif', 'сертиф', 'projects', 'проєкти', 'awards', 'volunteer', 'досягнення', 'achievements', 'interests', 'інтереси', 'publications', 'публікації'] },
+  { key: 'certifications', labels: ['certification', 'certifications', 'certif', 'сертиф', 'сертифікати', 'ліцензії', 'licenses', 'courses', 'курси'] },
+  { key: 'other', labels: ['languages', 'мови', 'projects', 'проєкти', 'awards', 'volunteer', 'досягнення', 'achievements', 'interests', 'інтереси', 'publications', 'публікації'] },
 ];
 
 function isContactLine(line) {
@@ -1283,7 +1648,7 @@ function isSectionHeading(line) {
 }
 
 function parseResumeSections(text) {
-  const result = { name: '', contact: '', header: '', summary: '', experience: '', education: '', skills: '', other: '', raw: text };
+  const result = { name: '', contact: '', header: '', summary: '', experience: '', education: '', skills: '', certifications: '', other: '', raw: text };
   const lines = text
     .split('\n')
     .map(l => l.trim())
@@ -1322,7 +1687,7 @@ function parseResumeSections(text) {
 
   // Parse sections
   let cur = null;
-  const buckets = { summary: [], experience: [], education: [], skills: [], other: [] };
+  const buckets = { summary: [], experience: [], education: [], skills: [], certifications: [], other: [] };
 
   for (const line of lines) {
     if (line === result.name) continue;
@@ -1337,6 +1702,7 @@ function parseResumeSections(text) {
   result.experience = buckets.experience.join('\n');
   result.education = buckets.education.join('\n');
   result.skills = buckets.skills.join('\n');
+  result.certifications = buckets.certifications.join('\n');
   result.other = buckets.other.join('\n');
   return result;
 }
@@ -1441,53 +1807,121 @@ function uniqueNonEmpty(items) {
 // --------------------------------------------------------
 // REWRITER — produces adapted resume object
 // --------------------------------------------------------
-function rewriteResume(parsed, matched, missing, jobText) {
+function rewriteResume(parsed, matched, _missing, jobText) {
   const jobTitle = detectJobTitle(jobText);
   const years = detectYearsExp(parsed.raw);
   const topMatched = uniqueNonEmpty(matched).filter(k => !isNoiseKeyword(k)).slice(0, 8);
-  const topMissing = uniqueNonEmpty(missing).filter(k => !isNoiseKeyword(k)).slice(0, 6);
-
-  // --- Summary ---
-  // Preserve original summary as-is. Only add a short adaptation addendum.
-  const baseSummary = sanitizeSectionText(parsed.summary, 12);
-  let newSummary = baseSummary;
-  if (!newSummary) {
-    newSummary = `Фахівець із ${years}+ роками досвіду. Цільова позиція: ${jobTitle}.`;
-  } else {
-    const addendum = [];
-    if (!newSummary.toLowerCase().includes(jobTitle.toLowerCase())) {
-      addendum.push(`Цільова позиція: ${jobTitle}.`);
+  const buildSummary = () => {
+    const baseSummary = sanitizeSectionText(parsed.summary, 10)
+      .split('\n')
+      .filter((line) => !/акцентувати|додати за наявності|релевантно до вакансії/i.test(line))
+      .join('\n')
+      .trim();
+    if (baseSummary) {
+      if (jobTitle && jobTitle !== 'Спеціаліст' && !baseSummary.toLowerCase().includes(jobTitle.toLowerCase())) {
+        return `${baseSummary}\nЦільова позиція: ${jobTitle}.`;
+      }
+      return baseSummary;
     }
-    if (topMatched.length > 0) {
-      addendum.push(`Акцентувати в досвіді: ${topMatched.slice(0, 5).join(', ')}.`);
+    const skillsLead = topMatched.slice(0, 4).join(', ');
+    let generated = `Фахівець із ${years}+ роками професійного досвіду.`;
+    if (skillsLead) generated += ` Ключові компетенції: ${skillsLead}.`;
+    if (jobTitle && jobTitle !== 'Спеціаліст') generated += ` Цільова позиція: ${jobTitle}.`;
+    return generated.trim();
+  };
+
+  const normalizeLine = (line) => String(line || '')
+    .replace(/^[•\-\*→▹▸▪●]+\s*/, '')
+    .replace(/^\d+[.)]\s*/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  const splitSkillItems = (text) => String(text || '')
+    .replace(/\n/g, ',')
+    .split(/[;,|]/)
+    .map((item) => normalizeLine(item))
+    .filter(Boolean)
+    .filter((item) => item.length >= 2 && item.length <= 50)
+    .filter((item) => !isNoiseKeyword(item))
+    .filter((item) => item.split(/\s+/).length <= 6);
+
+  const buildCoreSkills = () => {
+    const resumeLower = String(parsed.raw || '').toLowerCase();
+    const originalSkills = splitSkillItems(sanitizeSectionText(parsed.skills, 40));
+    const matchedSkills = topMatched.filter((term) => keywordMatchesResume(term, resumeLower));
+    const merged = uniqueNonEmpty([...originalSkills, ...matchedSkills]).slice(0, 16);
+    if (!merged.length) return '';
+    return merged.map((item) => `• ${item}`).join('\n');
+  };
+
+  const looksLikeExperienceHeading = (line) => {
+    const t = String(line || '').trim();
+    if (!t) return false;
+    if (/\b(?:з\s*\d{1,2}[./]\d{4}\s*по\s*(?:\d{1,2}[./]\d{4}|нині|досі|тепер)|(?:19|20)\d{2}\s*[-–]\s*(?:present|current|нині|досі|(?:19|20)\d{2}))\b/i.test(t)) return true;
+    if (/\(\d+\s*(?:рок|місяц)/i.test(t)) return true;
+    if (/^[A-ZА-ЯІЇЄҐ][^.!?]{2,100}$/.test(t) && /(ТОВ|ПП|ФОП|LLC|Inc|Ltd|департамент|школа|університет|company)/i.test(t)) return true;
+    return false;
+  };
+
+  const normalizeExperience = (text) => {
+    const clean = sanitizeSectionText(text, 140);
+    const lines = clean.split('\n').map((line) => normalizeLine(line)).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+      if (isResumeNoiseLine(line)) continue;
+      if (looksLikeExperienceHeading(line)) {
+        if (out.length && out[out.length - 1] !== '') out.push('');
+        out.push(line);
+        continue;
+      }
+      out.push(`• ${line}`);
     }
-    if (addendum.length > 0) {
-      newSummary += `\n\n${addendum.join('\n')}`;
+    while (out.length && out[0] === '') out.shift();
+    while (out.length && out[out.length - 1] === '') out.pop();
+    return out.join('\n');
+  };
+
+  const normalizeEducation = (text) => {
+    const clean = sanitizeSectionText(text, 80);
+    const lines = clean.split('\n').map((line) => normalizeLine(line)).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+      if (isResumeNoiseLine(line)) continue;
+      if (/(університет|university|інститут|institute|коледж|college|бакалавр|магістр|bachelor|master|degree|освіта|education)/i.test(line)) {
+        out.push(line);
+      } else {
+        out.push(`• ${line}`);
+      }
     }
-  }
+    return out.join('\n');
+  };
 
-  // --- Skills ---
-  // Keep original skills block and only append adaptation notes.
-  const baseSkills = sanitizeSectionText(parsed.skills, 40);
-  const skillsAddendum = [];
-  if (topMatched.length > 0) {
-    skillsAddendum.push(`Релевантно до вакансії: ${topMatched.join(', ')}`);
-  }
-  if (topMissing.length > 0) {
-    skillsAddendum.push(`Додати за наявності реального досвіду: ${topMissing.join(', ')}`);
-  }
-  const newSkills = baseSkills
-    ? `${baseSkills}${skillsAddendum.length ? `\n\n${skillsAddendum.join('\n')}` : ''}`
-    : (skillsAddendum.join('\n') || 'Додайте навички, релевантні до цільової позиції.');
+  const normalizeCertifications = (text) => {
+    const clean = sanitizeSectionText(text, 60);
+    const lines = clean.split('\n').map((line) => normalizeLine(line)).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+      if (isResumeNoiseLine(line)) continue;
+      out.push(line.startsWith('• ') ? line : `• ${line}`);
+    }
+    return out.join('\n');
+  };
 
-  // --- Experience & Education: preserve original, don't dump raw ---
-  const finalExperience = parsed.experience && parsed.experience.trim().length > 10
-    ? sanitizeSectionText(parsed.experience, 120)
-    : sanitizeSectionText(inferExperienceFromRaw(parsed.raw), 120);
+  const summary = buildSummary();
+  const coreSkills = buildCoreSkills();
+  const experienceSource = parsed.experience && parsed.experience.trim().length > 10
+    ? parsed.experience
+    : inferExperienceFromRaw(parsed.raw);
+  const educationSource = parsed.education && parsed.education.trim().length > 10
+    ? parsed.education
+    : inferEducationFromRaw(parsed.raw);
+  const certificationsSource = parsed.certifications && parsed.certifications.trim().length > 6
+    ? parsed.certifications
+    : inferCertificationsFromRaw(parsed.raw);
 
-  const finalEducation = parsed.education && parsed.education.trim().length > 10
-    ? sanitizeSectionText(parsed.education, 60)
-    : sanitizeSectionText(inferEducationFromRaw(parsed.raw), 60);
+  const finalExperience = normalizeExperience(experienceSource);
+  const finalEducation = normalizeEducation(educationSource);
+  const finalCertifications = normalizeCertifications(certificationsSource);
 
   const headerLines = uniqueNonEmpty(
     (parsed.header || '')
@@ -1513,13 +1947,13 @@ function rewriteResume(parsed, matched, missing, jobText) {
   return {
     name: finalName,
     contact: finalContact,
-    summary: newSummary,
-    skills: newSkills,
+    summary,
+    coreSkills,
+    skills: coreSkills, // compatibility with existing flows
     experience: finalExperience,
     education: finalEducation,
-    other: [sanitizeSectionText(parsed.other, 40), topMissing.length ? `Порада: не додавайте технології без практичного досвіду, навіть якщо вони є в JD.` : '']
-      .filter(Boolean)
-      .join('\n\n'),
+    certifications: finalCertifications,
+    other: sanitizeSectionText(parsed.other, 20),
   };
 }
 
@@ -1563,6 +1997,21 @@ function inferEducationFromRaw(rawText) {
   return '';
 }
 
+function inferCertificationsFromRaw(rawText) {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const certLines = [];
+
+  for (const line of lines) {
+    if (/(сертиф|certif|course|курси|academy|prometheus|cisco|google|azure|aws|comptia|palo alto|udemy|coursera)/i.test(line)) {
+      certLines.push(line);
+    }
+    if (certLines.length >= 16) break;
+  }
+
+  if (certLines.length > 0) return certLines.join('\n');
+  return '';
+}
+
 // --------------------------------------------------------
 // RENDER ADAPTED RESUME PREVIEW (HTML)
 // --------------------------------------------------------
@@ -1600,10 +2049,10 @@ function renderResumePreview(adapted) {
 
   const secs = [
     { icon: '📋', title: 'Профіль / Summary', body: adapted.summary },
-    { icon: '🔧', title: 'Навички / Skills', body: adapted.skills },
+    { icon: '🔧', title: 'Core Skills', body: adapted.coreSkills || adapted.skills },
     { icon: '💼', title: 'Досвід роботи', body: adapted.experience },
     { icon: '🎓', title: 'Освіта', body: adapted.education },
-    { icon: '📌', title: 'Додатково', body: adapted.other },
+    { icon: '📜', title: 'Сертифікації', body: adapted.certifications },
   ];
 
   let html = '';
@@ -1632,8 +2081,8 @@ const _origRenderResults = renderResults;
 renderResults = function (result) {
   _origRenderResults(result);
   try {
-    const resumeText = document.getElementById('resumeText').value;
-    const jobText = document.getElementById('jobText').value;
+    const resumeText = sanitizeResumeSource(document.getElementById('resumeText').value);
+    const jobText = sanitizeJobSource(document.getElementById('jobText').value);
     if (resumeText && jobText) {
       const parsed = parseResumeSections(resumeText);
       _latestAdapted = rewriteResume(parsed, result.matched, result.missing, jobText);
@@ -1726,10 +2175,10 @@ async function exportDOCX(adapted) {
 
   const sections = [
     { title: 'Профіль / Summary', text: adapted.summary },
-    { title: 'Навички / Skills', text: adapted.skills },
+    { title: 'Core Skills', text: adapted.coreSkills || adapted.skills },
     { title: 'Досвід роботи', text: adapted.experience },
     { title: 'Освіта', text: adapted.education },
-    { title: 'Додатково', text: adapted.other },
+    { title: 'Сертифікації', text: adapted.certifications },
   ];
 
   for (const sec of sections) {
@@ -1857,10 +2306,10 @@ async function exportPDF(adapted) {
 
   const secs = [
     { title: 'Профіль / Summary', text: adapted.summary },
-    { title: 'Навички / Skills', text: adapted.skills },
+    { title: 'Core Skills', text: adapted.coreSkills || adapted.skills },
     { title: 'Досвід роботи', text: adapted.experience },
     { title: 'Освіта', text: adapted.education },
-    { title: 'Додатково', text: adapted.other },
+    { title: 'Сертифікації', text: adapted.certifications },
   ];
 
   for (const sec of secs) {

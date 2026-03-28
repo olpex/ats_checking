@@ -1121,6 +1121,59 @@ body {
   color: var(--text);
 }
 
+/* Knockout + Readiness */
+.risk-list,
+.readiness-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.risk-item,
+.readiness-item {
+  display: flex;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.2);
+  border-left: 3px solid var(--glass-border);
+}
+
+.risk-item.covered,
+.readiness-item.pass {
+  border-left-color: var(--green);
+}
+
+.risk-item.unclear,
+.readiness-item.warn {
+  border-left-color: var(--yellow);
+}
+
+.risk-item.likely_missing,
+.readiness-item.fail {
+  border-left-color: var(--red);
+}
+
+.risk-body,
+.readiness-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.82rem;
+}
+
+.risk-title,
+.readiness-title {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.risk-desc,
+.readiness-desc {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .btn-export {
   background: var(--glass);
   border: 1px solid var(--glass-border);
