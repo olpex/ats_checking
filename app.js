@@ -219,6 +219,11 @@ const ACTION_VERBS = [
 ];
 
 const METRIC_PATTERN = /\b\d+(?:[.,]\d+)?\s*(?:%|процент|відсотк|ms|sec|seconds|год|годин|тиж|місяц|рок|users?|користувач|клієнт|проєкт|projects?)\b/i;
+const GENERIC_JD_TERMS = new Set([
+  'experience', 'досвід', 'years', 'роки', 'років', 'knowledge', 'знання', 'required', 'requirements',
+  'must', 'musthave', 'mandatory', 'candidate', 'кандидата', 'responsibilities', 'обовязки', 'tasks',
+  'skills', 'навички', 'ability', 'strong', 'team', 'work', 'робота', 'position', 'role', 'команда',
+]);
 
 // --------------------------------------------------------
 // TOKENIZER — preserves dots/hyphens in tech terms
@@ -490,6 +495,37 @@ function keywordConceptMatch(term, resumeLower) {
   return hits >= need;
 }
 
+function extractImportantTokens(text, limit = 260) {
+  const tokens = tokenize(String(text || ''))
+    .map(t => normalizeTerm(t))
+    .filter(t => t.length >= 3)
+    .filter(t => !isNoiseKeyword(t))
+    .filter(t => !STOP_WORDS.has(t))
+    .filter(t => !GENERIC_JD_TERMS.has(t));
+
+  const unique = [];
+  const seen = new Set();
+  for (const t of tokens) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    unique.push(t);
+    if (unique.length >= limit) break;
+  }
+  return unique;
+}
+
+function computeTokenCoverageScore(resumeText, jobText) {
+  const resumeTokens = new Set(extractImportantTokens(resumeText, 340));
+  const jobTokens = extractImportantTokens(jobText, 220);
+  if (jobTokens.length < 8) return 50;
+
+  let matched = 0;
+  for (const t of jobTokens) {
+    if (resumeTokens.has(t)) matched += 1;
+  }
+  return Math.round((matched / jobTokens.length) * 100);
+}
+
 function splitResumeZones(resumeText) {
   const parsed = parseResumeSections(resumeText);
   return {
@@ -697,9 +733,12 @@ function scoreATS(resumeText, jobText) {
     }
   }
 
-  const kwScore = jdKeywords.length > 0
+  const literalKwScore = jdKeywords.length > 0
     ? Math.round((matched.length / jdKeywords.length) * 100)
     : 0;
+  const tokenCoverageScore = computeTokenCoverageScore(cleanResumeText, cleanJobText);
+  let kwScore = Math.round(literalKwScore * 0.4 + tokenCoverageScore * 0.6);
+  if (jdKeywords.length <= 12) kwScore = Math.max(kwScore, literalKwScore);
 
   // Section detection
   const sections = detectSections(cleanResumeText);
@@ -740,8 +779,13 @@ function scoreATS(resumeText, jobText) {
   const hardKnockouts = knockoutRisks.filter(r =>
     r.status === 'likely_missing' && /(років|work authorization|віза|on-site|office)/i.test(r.label)
   ).length;
-  const knockoutPenalty = Math.min(8, hardKnockouts * 3);
-  const score = Math.max(0, Math.min(100, Math.round(baseScore - Math.min(8, stuffingPenalty) - knockoutPenalty)));
+  const knockoutPenalty = hardKnockouts >= 2 ? Math.min(8, hardKnockouts * 3) : 0;
+  let score = Math.max(0, Math.min(100, Math.round(baseScore - Math.min(8, stuffingPenalty) - knockoutPenalty)));
+
+  // Calibration for already-adapted resumes: good structure/title + strong lexical overlap.
+  if (tokenCoverageScore >= 68 && secScore >= 70 && titleScore >= 65) {
+    score = Math.max(score, Math.min(96, Math.round((score + tokenCoverageScore + kwScore) / 3 + 12)));
+  }
 
   return {
     score,
@@ -751,6 +795,8 @@ function scoreATS(resumeText, jobText) {
     contextScore,
     recencyScore,
     titleScore,
+    literalKwScore,
+    tokenCoverageScore,
     stuffingPenalty,
     matched,
     missing,
@@ -1429,7 +1475,7 @@ function animateScore(targetScore) {
 // --------------------------------------------------------
 function renderResults(result) {
   const {
-    score, kwScore, secScore, fmtScore, contextScore, recencyScore, titleScore,
+    score, kwScore, secScore, fmtScore, contextScore, recencyScore, titleScore, tokenCoverageScore,
     matched, missing, sections, knockoutRisks, formatFlags,
   } = result;
 
@@ -1447,6 +1493,7 @@ function renderResults(result) {
   // Breakdown bars
   const breakdownData = [
     { label: 'Ключові слова', val: kwScore, color: 'linear-gradient(90deg,#6366f1,#06b6d4)' },
+    { label: 'Token Coverage', val: tokenCoverageScore ?? kwScore, color: 'linear-gradient(90deg,#0891b2,#22c55e)' },
     { label: 'Контекст', val: contextScore, color: 'linear-gradient(90deg,#10b981,#06b6d4)' },
     { label: 'Актуальність', val: recencyScore, color: 'linear-gradient(90deg,#0ea5e9,#22c55e)' },
     { label: 'Структура', val: secScore, color: 'linear-gradient(90deg,#8b5cf6,#6366f1)' },
@@ -1551,7 +1598,7 @@ function copyReport() {
 
   const result = scoreATS(resumeText, jobText);
   const {
-    score, kwScore, secScore, fmtScore, contextScore, recencyScore, titleScore,
+    score, kwScore, secScore, fmtScore, contextScore, recencyScore, titleScore, tokenCoverageScore,
     matched, missing, sections, knockoutRisks,
   } = result;
 
@@ -1564,6 +1611,7 @@ function copyReport() {
 
 BREAKDOWN:
   🔑 Ключові слова:  ${kwScore}%
+  🔤 Token Coverage: ${tokenCoverageScore ?? kwScore}%
   🧠 Контекст:       ${contextScore}%
   🕒 Актуальність:   ${recencyScore}%
   🎯 Title Match:    ${titleScore}%
