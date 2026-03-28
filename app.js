@@ -466,6 +466,30 @@ function keywordMatchesResume(keyword, resumeLower) {
   return false;
 }
 
+function isScorableKeywordTerm(term) {
+  const normalized = normalizeTitleForMatch(term);
+  if (!normalized) return false;
+  const words = normalized.split(' ').filter(Boolean);
+  if (!words.length || words.length > 3) return false;
+  if (words.some(w => STOP_WORDS.has(w))) return false;
+  if (words.some(w => w.length < 2)) return false;
+  if (/^(?:must-have|required|mandatory|опціонально)$/i.test(normalized)) return false;
+  return true;
+}
+
+function keywordConceptMatch(term, resumeLower) {
+  const normalized = normalizeTitleForMatch(term);
+  const words = normalized.split(' ').filter(w => w.length > 2 && !STOP_WORDS.has(w));
+  if (!words.length) return false;
+  if (words.length === 1) return keywordMatchesResume(words[0], resumeLower);
+  let hits = 0;
+  for (const w of words) {
+    if (keywordMatchesResume(w, resumeLower)) hits += 1;
+  }
+  const need = Math.max(2, Math.ceil(words.length * 0.75));
+  return hits >= need;
+}
+
 function splitResumeZones(resumeText) {
   const parsed = parseResumeSections(resumeText);
   return {
@@ -520,13 +544,13 @@ function computeContextScore(matched, resumeText, zones) {
 }
 
 function computeRecencyScore(matched, resumeText) {
-  if (!matched.length) return 0;
+  if (!matched.length) return 50;
   const lines = resumeText.split('\n').map(l => l.trim()).filter(Boolean);
   const expStart = lines.findIndex(l => /\b(experience|досвід|work history|employment)\b/i.test(l));
   const experienceLines = expStart >= 0 ? lines.slice(expStart + 1) : lines;
   const recentWindow = experienceLines.slice(0, 24).join('\n').toLowerCase();
   const wholeExp = experienceLines.join('\n').toLowerCase();
-  if (!wholeExp) return 0;
+  if (!wholeExp) return 50;
 
   let recentHits = 0;
   let anyHits = 0;
@@ -534,7 +558,7 @@ function computeRecencyScore(matched, resumeText) {
     if (keywordMatchesResume(kw, wholeExp)) anyHits += 1;
     if (keywordMatchesResume(kw, recentWindow)) recentHits += 1;
   }
-  if (anyHits === 0) return 0;
+  if (anyHits === 0) return 45;
   return Math.round((recentHits / anyHits) * 100);
 }
 
@@ -621,18 +645,20 @@ function detectKnockoutRisks(jobText, resumeText) {
   }
 
   const mustLines = extractKnockoutCandidates(jobText);
+  const techPattern = /\b(azure|aws|gcp|vmware|nutanix|windows server|active directory|dhcp|dns|iis|fs-nfs|rds|hpe|lenovo|cisco|dell|netapp|kubernetes|docker|python|javascript|typescript|react|node\.?js|sql)\b/gi;
   const mustTerms = uniqueNonEmpty(
-    mustLines
-      .flatMap(l => extractKeywords(l, 8).map(k => k.original))
-      .filter(t => t.length >= 3 && !isNoiseKeyword(t))
+    mustLines.flatMap((line) => {
+      const found = line.match(techPattern) || [];
+      return found.map(term => term.trim());
+    })
   ).slice(0, 8);
 
   for (const t of mustTerms) {
     const covered = keywordMatchesResume(t, lowerResume);
     risks.push({
       label: `Must-have: ${t}`,
-      status: covered ? 'covered' : 'likely_missing',
-      detail: covered ? 'Знайдено в резюме' : 'Не знайдено прямого підтвердження',
+      status: covered ? 'covered' : 'unclear',
+      detail: covered ? 'Знайдено в резюме' : 'Не знайдено явного підтвердження (може бути синонім у досвіді)',
     });
   }
 
@@ -643,18 +669,31 @@ function scoreATS(resumeText, jobText) {
   const cleanResumeText = sanitizeResumeSource(resumeText);
   const cleanJobText = sanitizeJobSource(jobText);
 
-  const jdKeywords = extractKeywords(cleanJobText, 40);
+  const rawKeywordCandidates = extractKeywords(cleanJobText, 90);
+  const jdKeywords = [];
+  const seenNorm = new Set();
+  for (const item of rawKeywordCandidates) {
+    const display = String(item.original || item.key || '').trim();
+    const norm = normalizeTitleForMatch(display);
+    if (!isScorableKeywordTerm(norm)) continue;
+    if (seenNorm.has(norm)) continue;
+    seenNorm.add(norm);
+    jdKeywords.push({ display, norm });
+    if (jdKeywords.length >= 45) break;
+  }
   const resumeLower = cleanResumeText.toLowerCase();
   const zones = splitResumeZones(cleanResumeText);
 
   // Keyword matching
   const matched = [];
+  const matchedConcepts = [];
   const missing = [];
   for (const kw of jdKeywords) {
-    if (keywordMatchesResume(kw.key, resumeLower) || keywordMatchesResume(kw.original, resumeLower)) {
-      matched.push(kw.original);
+    if (keywordConceptMatch(kw.norm, resumeLower)) {
+      matched.push(kw.display);
+      matchedConcepts.push(kw.norm);
     } else {
-      missing.push(kw.original);
+      missing.push(kw.display);
     }
   }
 
@@ -678,8 +717,8 @@ function scoreATS(resumeText, jobText) {
   const fmtScore = Math.max(100 - fmtPenalty, 30);
 
   // Contextual + recency + title + stuffing
-  const contextScore = computeContextScore(matched, cleanResumeText, zones);
-  const recencyScore = computeRecencyScore(matched, cleanResumeText);
+  const contextScore = computeContextScore(matchedConcepts, cleanResumeText, zones);
+  const recencyScore = computeRecencyScore(matchedConcepts, cleanResumeText);
   const titleScore = computeTitleAlignmentScore(cleanJobText, cleanResumeText);
   const stuffingPenalty = computeStuffingPenalty(cleanResumeText);
   const knockoutRisks = detectKnockoutRisks(cleanJobText, cleanResumeText);
@@ -698,8 +737,11 @@ function scoreATS(resumeText, jobText) {
     secScore * 0.12 +
     fmtScore * 0.10 +
     titleScore * 0.10;
-  const knockoutPenalty = knockoutRisks.filter(r => r.status === 'likely_missing').length * 2;
-  const score = Math.max(0, Math.min(100, Math.round(baseScore - stuffingPenalty - knockoutPenalty)));
+  const hardKnockouts = knockoutRisks.filter(r =>
+    r.status === 'likely_missing' && /(років|work authorization|віза|on-site|office)/i.test(r.label)
+  ).length;
+  const knockoutPenalty = Math.min(8, hardKnockouts * 3);
+  const score = Math.max(0, Math.min(100, Math.round(baseScore - Math.min(8, stuffingPenalty) - knockoutPenalty)));
 
   return {
     score,
@@ -1910,8 +1952,8 @@ function detectJobTitle(jobText) {
 // HELPER — estimate years of experience
 // --------------------------------------------------------
 function detectYearsExp(rawText) {
-  // Try explicit "X years of experience" first
-  const m = rawText.match(/(\d+)\+?\s*(?:years?|роки?|років|рік)\s*(?:of\s*(?:experience|досвіду)|досвіду)?/i);
+  // Try explicit "X years of experience" first (strict context to avoid matching age).
+  const m = rawText.match(/(\d+)\+?\s*(?:years?|роки?|років|рік)\s*(?:of\s+experience|досвіду)/i);
   if (m) return parseInt(m[1]);
 
   // Calculate from date ranges
