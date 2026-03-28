@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="uk">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATS Resume Analyzer – Оптимізуй своє резюме</title>
+  <meta name="description"
+    content="Безкоштовний ATS аналізатор резюме. Перевір відповідність резюме до вакансії та отримай персональні рекомендації." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+  <!-- NAV -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <span class="logo-icon">⚡</span>
+        <span>ATS<strong>Analyzer</strong></span>
+      </div>
+      <ul class="nav-links">
+        <li><a href="#about">Що таке ATS?</a></li>
+        <li><a href="#how">Як працює?</a></li>
+        <li><a href="#analyzer">Аналізатор</a></li>
+        <li><a href="#tips">Поради</a></li>
+      </ul>
+      <button class="nav-cta" onclick="document.getElementById('analyzer').scrollIntoView({behavior:'smooth'})">
+        Аналізувати →
+      </button>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero" id="hero">
+    <div class="hero-bg">
+      <div class="hero-orb orb-1"></div>
+      <div class="hero-orb orb-2"></div>
+      <div class="hero-orb orb-3"></div>
+    </div>
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        Безкоштовно · 100% онлайн
+      </div>
+      <h1 class="hero-title">
+        Твоє резюме <br />
+        <span class="gradient-text">проходить ATS?</span>
+      </h1>
+      <p class="hero-sub">
+        Більшість компаній використовують ATS-системи, які відсіюють резюме автоматично — ще до того, як HR їх побачить.
+        Дізнайся свій рейтинг за лічені секунди.
+      </p>
+      <div class="hero-actions">
+        <button class="btn-primary" onclick="document.getElementById('analyzer').scrollIntoView({behavior:'smooth'})">
+          <span>Перевірити резюме</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24"
+            stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+          </svg>
+        </button>
+        <button class="btn-ghost" onclick="document.getElementById('about').scrollIntoView({behavior:'smooth'})">
+          Дізнатись більше
+        </button>
+      </div>
+      <div class="hero-stats">
+        <div class="stat-item"><span class="stat-num">75%</span><span class="stat-label">резюме відхиляє ATS</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item"><span class="stat-num">98%</span><span class="stat-label">великих компаній використовують
+            ATS</span></div>
+        <div class="stat-divider"></div>
+        <div class="stat-item"><span class="stat-num">6 сек</span><span class="stat-label">рекрутер дивиться на
+            резюме</span></div>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="mockup-card">
+        <div class="mockup-header">
+          <div class="mockup-dots">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="mockup-title">ATS Score</span>
+        </div>
+        <div class="mockup-score-ring">
+          <svg viewBox="0 0 120 120" class="ring-svg" width="120" height="120">
+            <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="10" />
+            <circle cx="60" cy="60" r="50" fill="none" stroke="url(#heroGrad)" stroke-width="10" stroke-dasharray="314"
+              stroke-dashoffset="94" stroke-linecap="round" transform="rotate(-90 60 60)" />
+            <defs>
+              <linearGradient id="heroGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#6366f1" />
+                <stop offset="100%" stop-color="#06b6d4" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div class="ring-label">
+            <span class="ring-num">70%</span>
+            <span class="ring-sub">ATS Score</span>
+          </div>
+        </div>
+        <div class="mockup-tags">
+          <span class="tag-match">✓ Python</span>
+          <span class="tag-match">✓ React</span>
+          <span class="tag-miss">✗ Docker</span>
+          <span class="tag-match">✓ Agile</span>
+          <span class="tag-miss">✗ Kubernetes</span>
+          <span class="tag-match">✓ SQL</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ABOUT ATS -->
+  <section class="section" id="about">
+    <div class="container">
+      <div class="section-label">Освіта</div>
+      <h2 class="section-title">Що таке ATS?</h2>
+      <p class="section-subtitle">Applicant Tracking System — система відстеження кандидатів</p>
+
+      <div class="cards-grid">
+        <div class="info-card glass-card">
+          <div class="card-icon">🤖</div>
+          <h3>Автоматичний відбір</h3>
+          <p>ATS — це програмне забезпечення, яке автоматично сканує, сортує та ранжує резюме перед тим, як рекрутер їх
+            побачить. Slack, Google, Meta, Amazon — усі ці компанії використовують ATS.</p>
+        </div>
+        <div class="info-card glass-card">
+          <div class="card-icon">🔍</div>
+          <h3>Як ATS аналізує?</h3>
+          <p>Система парсить текст резюме, шукає ключові слова з опису вакансії, перевіряє наявність обов'язкових секцій
+            (досвід, освіта, навички) та оцінює формат документа.</p>
+        </div>
+        <div class="info-card glass-card">
+          <div class="card-icon">⚠️</div>
+          <h3>Чому резюме відхиляють?</h3>
+          <p>Нестандартне форматування (таблиці, колонки, зображення), відсутність ключових слів з вакансії, нечіткі
+            назви секцій або складний PDF-формат можуть "зламати" парсинг.</p>
+        </div>
+        <div class="info-card glass-card">
+          <div class="card-icon">🎯</div>
+          <h3>Як пройти ATS?</h3>
+          <p>Використовуй простий одноколонковий формат, адаптуй резюме під кожну вакансію, включай ключові слова з
+            опису посади і чітко називай секції стандартними заголовками.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="section section-dark" id="how">
+    <div class="container">
+      <div class="section-label">Процес</div>
+      <h2 class="section-title">Як працює ATS?</h2>
+      <p class="section-subtitle">Крок за кроком — від подачі заявки до отримання дзвінка від рекрутера</p>
+
+      <div class="steps-flow">
+        <div class="step-item">
+          <div class="step-num">01</div>
+          <div class="step-content">
+            <h3>Ти подаєш резюме</h3>
+            <p>Через сайт компанії, LinkedIn або job-portal. Файл потрапляє в ATS-систему (Workday, Greenhouse, Lever та
+              ін.).</p>
+          </div>
+        </div>
+        <div class="step-arrow">→</div>
+        <div class="step-item">
+          <div class="step-num">02</div>
+          <div class="step-content">
+            <h3>ATS парсить текст</h3>
+            <p>Система витягує: ім'я, контакти, досвід роботи, освіту, навички, хронологію. Складні PDF або DOCX з
+              таблицями можуть зчитатися некоректно.</p>
+          </div>
+        </div>
+        <div class="step-arrow">→</div>
+        <div class="step-item">
+          <div class="step-num">03</div>
+          <div class="step-content">
+            <h3>Порівняння з вакансією</h3>
+            <p>ATS порівнює ключові слова твого резюме з описом вакансії та встановлює відсоток відповідності (match
+              score).</p>
+          </div>
+        </div>
+        <div class="step-arrow">→</div>
+        <div class="step-item">
+          <div class="step-num">04</div>
+          <div class="step-content">
+            <h3>Рекрутер бачить результат</h3>
+            <p>Рекрутер відкриває ATS і бачить кандидатів з найвищим рейтингом. Якщо твій score низький — резюме
+              залишається внизу списку або взагалі відхиляється.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ANALYZER TOOL -->
+  <section class="section" id="analyzer">
+    <div class="container">
+      <div class="section-label">Інструмент</div>
+      <h2 class="section-title">Аналізатор резюме</h2>
+      <p class="section-subtitle">Вставте текст резюме та опис вакансії для аналізу</p>
+
+      <div class="analyzer-grid">
+        <!-- Left: Inputs -->
+        <div class="analyzer-inputs">
+          <!-- Resume Input -->
+          <div class="input-block glass-card">
+            <div class="input-header">
+              <div class="input-icon">📄</div>
+              <div>
+                <h3>Ваше резюме</h3>
+                <p>Вставте текст резюме або завантажте файл <strong>PDF, DOCX або TXT</strong></p>
+              </div>
+            </div>
+            <div class="upload-zone" id="resumeUploadZone">
+              <input type="file" id="resumeFile"
+                accept=".txt,.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                class="file-input" />
+              <div class="upload-content">
+                <span class="upload-icon">📁</span>
+                <span>Перетягніть файл або <label for="resumeFile" class="file-label">виберіть файл</label></span>
+              </div>
+              <div id="uploadHint" style="font-size:0.72rem;color:var(--text-dim);margin-top:6px;text-align:center">PDF
+                · DOCX · TXT</div>
+            </div>
+            <textarea class="text-area" id="resumeText" placeholder="Або вставте текст резюме сюди...
+              
+Наприклад:
+Іван Петренко
+Software Engineer
+Досвід: 3 роки
+Навички: Python, React, SQL, Docker
+Освіта: КПІ, Комп'ютерна наука, 2021
+..." rows="10"></textarea>
+            <div class="char-count" id="resumeCount">0 слів</div>
+          </div>
+
+          <!-- Job Description Input -->
+          <div class="input-block glass-card">
+            <div class="input-header">
+              <div class="input-icon">💼</div>
+              <div style="flex:1">
+                <h3>Опис вакансії</h3>
+                <p>Вставте текст або вкажіть <strong>посилання на вакансію</strong></p>
+              </div>
+            </div>
+
+            <!-- Source toggle tabs -->
+            <div class="source-tabs">
+              <button class="src-tab active" id="srcTabText" onclick="switchJobSource('text')">📝 Текст</button>
+              <button class="src-tab" id="srcTabUrl" onclick="switchJobSource('url')">🔗 Посилання</button>
+            </div>
+
+            <!-- URL input panel -->
+            <div class="url-panel" id="jobUrlPanel" style="display:none">
+              <div class="url-input-row">
+                <input type="url" id="jobUrlInput" class="url-input"
+                  placeholder="https://dou.ua/jobs/... або https://www.linkedin.com/jobs/..."
+                  onkeydown="if(event.key==='Enter') fetchJobFromUrl()" />
+                <button class="btn-fetch" id="fetchBtn" onclick="fetchJobFromUrl()">
+                  <span id="fetchBtnText">Завантажити</span>
+                </button>
+              </div>
+              <div class="url-supported">
+                <span class="supported-label">Підтримувані сайти:</span>
+                <span class="site-badge">LinkedIn</span>
+                <span class="site-badge">DOU.ua</span>
+                <span class="site-badge">Work.ua</span>
+                <span class="site-badge">Djinni.co</span>
+                <span class="site-badge">Rabota.ua</span>
+                <span class="site-badge">та інші</span>
+              </div>
+              <div class="fetch-status" id="fetchStatus"></div>
+            </div>
+
+            <textarea class="text-area" id="jobText" placeholder="Вставте сюди повний опис вакансії...
+
+Наприклад:
+Ми шукаємо Senior Frontend Developer.
+Вимоги:
+- React, TypeScript, Redux
+- 3+ роки досвіду
+- Agile / Scrum
+- REST API, Git
+..." rows="10"></textarea>
+            <div class="char-count" id="jobCount">0 слів</div>
+          </div>
+
+          <button class="btn-analyze" id="analyzeBtn" onclick="runAnalysis()">
+            <span id="analyzeBtnText">⚡ Аналізувати резюме</span>
+          </button>
+          <div class="error-msg" id="errorMsg"></div>
+        </div>
+
+        <!-- Right: Results -->
+        <div class="analyzer-results" id="resultsPanel" style="display:none;">
+          <!-- Score Ring -->
+          <div class="result-card glass-card score-card">
+            <h3>ATS Score</h3>
+            <div class="score-ring-wrap">
+              <svg viewBox="0 0 160 160" width="160" height="160" class="score-ring-svg">
+                <circle cx="80" cy="80" r="65" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="14" />
+                <circle id="scoreArc" cx="80" cy="80" r="65" fill="none" stroke="url(#scoreGrad)" stroke-width="14"
+                  stroke-dasharray="408" stroke-dashoffset="408" stroke-linecap="round" transform="rotate(-90 80 80)" />
+                <defs>
+                  <linearGradient id="scoreGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#6366f1" />
+                    <stop offset="100%" stop-color="#06b6d4" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div class="score-label">
+                <span class="score-num" id="scoreNum">0</span>
+                <span class="score-pct">%</span>
+                <span class="score-sub" id="scoreSub">Аналіз...</span>
+              </div>
+            </div>
+            <div class="score-breakdown" id="scoreBreakdown"></div>
+          </div>
+
+          <!-- Keywords -->
+          <div class="result-card glass-card">
+            <h3>🔑 Ключові слова</h3>
+            <div class="keywords-tabs">
+              <button class="kw-tab active" onclick="switchTab('matched')">✓ Знайдено</button>
+              <button class="kw-tab" onclick="switchTab('missing')">✗ Відсутні</button>
+            </div>
+            <div class="keywords-panel" id="matchedPanel">
+              <div class="kw-tags" id="matchedTags"></div>
+            </div>
+            <div class="keywords-panel hidden" id="missingPanel">
+              <div class="kw-tags" id="missingTags"></div>
+            </div>
+          </div>
+
+          <!-- Sections -->
+          <div class="result-card glass-card">
+            <h3>📋 Секції резюме</h3>
+            <div class="sections-list" id="sectionsList"></div>
+          </div>
+
+          <!-- Recommendations -->
+          <div class="result-card glass-card">
+            <h3>💡 Рекомендації</h3>
+            <div class="recs-list" id="recsList"></div>
+          </div>
+
+          <!-- Adapted Resume -->
+          <div class="result-card glass-card adapted-card" id="adaptedResumeCard" style="display:none">
+            <div class="adapted-header">
+              <h3>✨ Адаптоване резюме</h3>
+              <span class="adapted-badge">оптимізовано під вакансію</span>
+            </div>
+            <p class="adapted-hint">Резюме переструктуровано: сумарі адаптований, навички посортовані за пріоритетом
+              вакансії, досвід при необхідності збережено.</p>
+            <div class="resume-preview" id="resumePreview"></div>
+            <div class="export-row">
+              <div class="format-toggle">
+                <label class="fmt-option" id="fmtDocx">
+                  <input type="radio" name="exportFmt" value="docx" checked />
+                  <span class="fmt-icon">📄</span> DOCX
+                </label>
+                <label class="fmt-option" id="fmtPdf">
+                  <input type="radio" name="exportFmt" value="pdf" />
+                  <span class="fmt-icon">📋</span> PDF
+                </label>
+              </div>
+              <button class="btn-download" id="downloadBtn" onclick="downloadResume()">
+                ⬇ Завантажити резюме
+              </button>
+            </div>
+          </div>
+
+          <!-- Export -->
+          <button class="btn-export" onclick="copyReport()" id="copyBtn">
+            📋 Скопіювати звіт
+          </button>
+        </div>
+
+        <!-- Placeholder when no results -->
+        <div class="analyzer-placeholder" id="resultsPlaceholder">
+          <div class="placeholder-icon">🎯</div>
+          <p>Заповніть поля зліва та натисніть <strong>Аналізувати</strong>, щоб отримати детальний звіт
+            ATS-відповідності.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TIPS SECTION -->
+  <section class="section section-dark" id="tips">
+    <div class="container">
+      <div class="section-label">Поради</div>
+      <h2 class="section-title">Як оптимізувати резюме для ATS?</h2>
+      <p class="section-subtitle">Основні правила, які збільшать шанси пройти автоматичний відбір</p>
+
+      <div class="tips-grid">
+        <div class="tip-card glass-card">
+          <div class="tip-num">01</div>
+          <h3>Простий формат файлу</h3>
+          <ul>
+            <li>Використовуй .docx або простий PDF</li>
+            <li>Уникай таблиць, колонок, фреймів</li>
+            <li>Не вставляй зображення або логотипи</li>
+            <li>Простий одноколонковий макет</li>
+          </ul>
+        </div>
+        <div class="tip-card glass-card">
+          <div class="tip-num">02</div>
+          <h3>Ключові слова з вакансії</h3>
+          <ul>
+            <li>Уважно читай опис вакансії</li>
+            <li>Включай точні слова з JD у резюме</li>
+            <li>Особливо у секції "Навички"</li>
+            <li>Не вигадуй — ATS порівнює точно</li>
+          </ul>
+        </div>
+        <div class="tip-card glass-card">
+          <div class="tip-num">03</div>
+          <h3>Стандартні назви секцій</h3>
+          <ul>
+            <li>Work Experience / Досвід роботи</li>
+            <li>Education / Освіта</li>
+            <li>Skills / Навички</li>
+            <li>Summary / Профіль</li>
+          </ul>
+        </div>
+        <div class="tip-card glass-card">
+          <div class="tip-num">04</div>
+          <h3>Контактна інформація</h3>
+          <ul>
+            <li>Телефон, email у заголовку</li>
+            <li>LinkedIn URL (за можливості)</li>
+            <li>Місто/країна (без повної адреси)</li>
+            <li>Не використовуй header/footer Word</li>
+          </ul>
+        </div>
+        <div class="tip-card glass-card">
+          <div class="tip-num">05</div>
+          <h3>Формат дат</h3>
+          <ul>
+            <li>Використовуй: Jan 2022 – Present</li>
+            <li>Або: 01/2022 – 03/2024</li>
+            <li>Уникай відносних дат: "2 роки тому"</li>
+            <li>Вказуй роки чітко для кожної позиції</li>
+          </ul>
+        </div>
+        <div class="tip-card glass-card">
+          <div class="tip-num">06</div>
+          <h3>Адаптуй під кожну вакансію</h3>
+          <ul>
+            <li>Одне резюме ≠ для всіх вакансій</li>
+            <li>Редагуй Summary під конкретну роль</li>
+            <li>Переставляй навички за пріоритетом JD</li>
+            <li>Використовуй наш аналізатор для перевірки</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="nav-logo">
+          <span class="logo-icon">⚡</span>
+          <span>ATS<strong>Analyzer</strong></span>
+        </div>
+        <p class="footer-text">Безкоштовний інструмент для оптимізації резюме. Усі дані обробляються локально у вашому
+          браузері.</p>
+        <p class="footer-copy">© 2026 ATSAnalyzer</p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- docx.js for DOCX export -->
+  <script src="https://unpkg.com/docx@7.8.2/build/index.js"></script>
+  <!-- jsPDF for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- PDF.js for PDF parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Mammoth.js for DOCX parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>
