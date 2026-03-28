@@ -315,24 +315,69 @@ function evaluateSectionQuality(sectionKey, text) {
   return { quality: 'good', words, lines };
 }
 
+function isDateRangeLine(line) {
+  return /\b(?:\d{1,2}[./]\d{4}\s*(?:[-–]|по)\s*(?:\d{1,2}[./]\d{4}|нині|досі|тепер)|(?:19|20)\d{2}\s*[-–]\s*(?:present|current|нині|досі|(?:19|20)\d{2}))\b/i.test(line);
+}
+
+function inferSummaryFromTop(lines) {
+  const summaryCandidates = lines
+    .filter(l => !isContactLine(l))
+    .filter(l => !isSectionHeading(l))
+    .filter(l => !isDateRangeLine(l))
+    .filter(l => l.length > 20)
+    .slice(0, 4);
+  return summaryCandidates.join('\n');
+}
+
+function collectLinesByPredicate(lines, predicate, limit = 18) {
+  const out = [];
+  for (const line of lines) {
+    if (predicate(line)) out.push(line);
+    if (out.length >= limit) break;
+  }
+  return out.join('\n');
+}
+
 function detectSections(resumeText) {
-  const parsed = parseResumeSections(resumeText);
-  const otherText = `${parsed.other || ''}\n${parsed.raw || ''}`.toLowerCase();
+  const cleanText = sanitizeResumeSource(resumeText);
+  const parsed = parseResumeSections(cleanText);
+  const lines = cleanText.split('\n').map(l => l.trim()).filter(Boolean);
+  const topLines = lines.slice(0, 16);
+  const rawLower = cleanText.toLowerCase();
+
+  const experienceHeuristic = (line) =>
+    isDateRangeLine(line)
+    || /\b(experience|досвід|worked|work|position|посада|рол[ья]|company|компанія|team|проєкт|project)\b/i.test(line);
+  const educationHeuristic = (line) =>
+    /\b(education|освіта|university|університет|college|коледж|інститут|institute|бакалавр|магістр|bachelor|master|degree|диплом)\b/i.test(line);
+  const skillsHeuristic = (line) =>
+    /\b(skills?|навички|технолог|stack|tools?|інструменти)\b/i.test(line)
+    || (line.split(',').length >= 4 && !isDateRangeLine(line) && !/https?:\/\//i.test(line));
+  const languageHeuristic = (line) =>
+    /\b(languages?|мови|english|ukrainian|german|deutsch|french|spanish|латиськ|німецьк|українськ|англійськ)\b/i.test(line);
+  const projectHeuristic = (line) =>
+    /\b(project|проєкт|portfolio|github|pet project|youtube|канал)\b/i.test(line)
+    || /https?:\/\/\S+/i.test(line);
+  const certHeuristic = (line) =>
+    /\b(certif|сертиф|course|курси|academy|azure|aws|gcp|cisco|comptia|coursera|udemy|google)\b/i.test(line);
+
   const evidenceByKey = {
-    contact: `${parsed.contact || ''}\n${parsed.header || ''}`.trim(),
-    summary: parsed.summary || '',
-    experience: parsed.experience || '',
-    education: parsed.education || '',
-    skills: parsed.skills || '',
-    languages: (parsed.other || '').split('\n').filter(l => /\b(english|ukrainian|німец|deutsch|french|spanish|мова|мови)\b/i.test(l)).join('\n'),
-    projects: (parsed.other || '').split('\n').filter(l => /\b(project|проєкт|portfolio|github|pet project)\b/i.test(l) || /https?:\/\//i.test(l)).join('\n'),
-    certifications: parsed.certifications || (parsed.other || '').split('\n').filter(l => /\b(certif|сертиф|course|курс|azure|aws|gcp|cisco|comptia|coursera|udemy)\b/i.test(l)).join('\n'),
+    contact: `${parsed.contact || ''}\n${collectLinesByPredicate(topLines, isContactLine, 8)}`.trim(),
+    summary: parsed.summary || inferSummaryFromTop(topLines),
+    experience: parsed.experience || collectLinesByPredicate(lines, experienceHeuristic, 28),
+    education: parsed.education || collectLinesByPredicate(lines, educationHeuristic, 16),
+    skills: parsed.skills || collectLinesByPredicate(lines, skillsHeuristic, 16),
+    languages: collectLinesByPredicate(lines, languageHeuristic, 8),
+    projects: collectLinesByPredicate(lines, projectHeuristic, 12),
+    certifications: parsed.certifications || collectLinesByPredicate(lines, certHeuristic, 14),
   };
 
   return SECTIONS.map(sec => {
     const localText = String(evidenceByKey[sec.key] || '');
     const contentCheck = evaluateSectionQuality(sec.key, localText);
-    const patternFound = sec.patterns.some(pat => pat.test(localText) || pat.test(otherText));
+    const patternFoundLocal = sec.patterns.some(pat => pat.test(localText));
+    const patternFoundRaw = sec.patterns.some(pat => pat.test(rawLower));
+    const patternFound = patternFoundLocal || patternFoundRaw;
     const found = contentCheck.quality !== 'missing' || patternFound;
     const quality = found ? (contentCheck.quality === 'missing' ? 'weak' : contentCheck.quality) : 'missing';
 
