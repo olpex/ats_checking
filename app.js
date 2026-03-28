@@ -1335,85 +1335,61 @@ function detectYearsExp(rawText) {
   return yearEntries >= 6 ? 5 : yearEntries >= 4 ? 3 : yearEntries >= 2 ? 2 : 1;
 }
 
+function uniqueNonEmpty(items) {
+  const out = [];
+  const seen = new Set();
+  for (const item of items) {
+    const v = String(item || '').trim();
+    if (!v) continue;
+    const k = v.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
+  return out;
+}
+
 // --------------------------------------------------------
 // REWRITER — produces adapted resume object
 // --------------------------------------------------------
 function rewriteResume(parsed, matched, missing, jobText) {
   const jobTitle = detectJobTitle(jobText);
   const years = detectYearsExp(parsed.raw);
-  const topMatched = matched.slice(0, 8);
-  const topMissing = missing.slice(0, 6);
+  const topMatched = uniqueNonEmpty(matched).slice(0, 8);
+  const topMissing = uniqueNonEmpty(missing).slice(0, 6);
 
   // --- Summary ---
-  let newSummary;
-  const hasOriginalSummary = parsed.summary && parsed.summary.trim().length >= 40;
-
-  if (hasOriginalSummary) {
-    // Use original summary, append job alignment
-    newSummary = parsed.summary.trim();
+  // Preserve original summary as-is. Only add a short adaptation addendum.
+  const baseSummary = (parsed.summary || '').trim();
+  let newSummary = baseSummary;
+  if (!newSummary) {
+    newSummary = `Фахівець із ${years}+ роками досвіду. Цільова позиція: ${jobTitle}.`;
+  } else {
+    const addendum = [];
     if (!newSummary.toLowerCase().includes(jobTitle.toLowerCase())) {
-      newSummary += `\nЦільова позиція: ${jobTitle}.`;
+      addendum.push(`Цільова позиція: ${jobTitle}.`);
     }
     if (topMatched.length > 0) {
-      newSummary += `\nКлючові компетенції: ${topMatched.join(', ')}.`;
+      addendum.push(`Акцентувати в досвіді: ${topMatched.slice(0, 5).join(', ')}.`);
     }
-    if (newSummary.length > 600) newSummary = newSummary.slice(0, 597) + '...';
-  } else {
-    // Build summary from scratch — but more natural, not templated
-    const levelPrefix = years >= 8 ? 'Досвідчений' : years >= 5 ? 'Кваліфікований' : years >= 3 ? 'Фаховий' : 'Мотивований';
-    const parts = [];
-    parts.push(`${levelPrefix} спеціаліст з ${years}+ роками професійного досвіду.`);
-    if (topMatched.length >= 3) {
-      parts.push(`Експертиза: ${topMatched.slice(0, 5).join(', ')}.`);
+    if (addendum.length > 0) {
+      newSummary += `\n\n${addendum.join('\n')}`;
     }
-    parts.push(`Зацікавлений у позиції ${jobTitle}.`);
-    if (parsed.summary) {
-      // Append whatever original content exists
-      parts.push(parsed.summary.trim());
-    }
-    newSummary = parts.join(' ');
-    if (newSummary.length > 500) newSummary = newSummary.slice(0, 497) + '...';
   }
 
   // --- Skills ---
-  // Extract individual skill tokens from parsed skills section
-  const origSkillLines = parsed.skills
-    .split('\n')
-    .map(l => l.replace(/^[•\-\*→]\s*/, '').trim())
-    .filter(Boolean);
-
-  const origSkillTokens = origSkillLines
-    .flatMap(l => l.split(/[,|\/]/))
-    .map(s => s.trim())
-    .filter(s => s.length > 1 && s.length < 50);
-
-  // Matched skills = only those that are actual tech/tool terms found in resume
-  const matchedAsSkills = topMatched.filter(kw =>
-    origSkillTokens.some(s => s.toLowerCase().includes(kw.toLowerCase()) || kw.toLowerCase().includes(s.toLowerCase()))
-  );
-
-  // Other matched keywords (not necessarily skills)
-  const matchedKeywords = topMatched.filter(kw => !matchedAsSkills.includes(kw));
-
-  // Rest of original skills not in matched
-  const restSkills = origSkillTokens.filter(s =>
-    !matchedAsSkills.some(m => m.toLowerCase() === s.toLowerCase())
-  );
-
-  const skillSections = [];
-  if (matchedAsSkills.length > 0) {
-    skillSections.push('Пріоритетні (з вакансії):\n  • ' + matchedAsSkills.join('\n  • '));
-  }
-  if (restSkills.length > 0) {
-    skillSections.push('Додаткові:\n  • ' + restSkills.join('\n  • '));
-  }
-  if (matchedKeywords.length > 0) {
-    skillSections.push('Відповідність вакансії:\n  • ' + matchedKeywords.join('\n  • '));
+  // Keep original skills block and only append adaptation notes.
+  const baseSkills = (parsed.skills || '').trim();
+  const skillsAddendum = [];
+  if (topMatched.length > 0) {
+    skillsAddendum.push(`Релевантно до вакансії: ${topMatched.join(', ')}`);
   }
   if (topMissing.length > 0) {
-    skillSections.push('Рекомендовано освоїти:\n  • ' + topMissing.join('\n  • '));
+    skillsAddendum.push(`Додати за наявності реального досвіду: ${topMissing.join(', ')}`);
   }
-  const newSkills = skillSections.join('\n\n');
+  const newSkills = baseSkills
+    ? `${baseSkills}${skillsAddendum.length ? `\n\n${skillsAddendum.join('\n')}` : ''}`
+    : (skillsAddendum.join('\n') || 'Додайте навички, релевантні до цільової позиції.');
 
   // --- Experience & Education: preserve original, don't dump raw ---
   const finalExperience = parsed.experience && parsed.experience.trim().length > 10
@@ -1428,10 +1404,12 @@ function rewriteResume(parsed, matched, missing, jobText) {
     name: parsed.name || '',
     contact: parsed.contact,
     summary: newSummary,
-    skills: newSkills || parsed.skills || 'Додайте навички, релевантні до цільової позиції.',
+    skills: newSkills,
     experience: finalExperience,
     education: finalEducation,
-    other: parsed.other,
+    other: [parsed.other, topMissing.length ? `Порада: не додавайте технології без практичного досвіду, навіть якщо вони є в JD.` : '']
+      .filter(Boolean)
+      .join('\n\n'),
   };
 }
 
