@@ -1569,6 +1569,7 @@ body {
   color: var(--text-muted);
   margin-bottom: 14px;
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 .rp-section {

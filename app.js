@@ -1212,7 +1212,10 @@ const RESUME_SECTION_PATTERNS = [
 ];
 
 function isContactLine(line) {
-  return /@/.test(line) || /\+\d/.test(line) || /linkedin\.com/i.test(line) || /github\.com/i.test(line) || /(^|\s)\+?38\d{9}/.test(line) || /\d{3}[-.\s]\d{3}[-.\s]\d{4}/.test(line);
+  return /@/.test(line)
+    || /\+?\d[\d\s().-]{7,}\d/.test(line)
+    || /linkedin\.com|github\.com|behance\.net|portfolio|telegram|tg:|skype|website|site|http/i.test(line)
+    || /\b(phone|tel|e-?mail|email|contact|contacts|контакт|телефон|пошта|адрес|address|location|локац|місто|city|date of birth|дата народження|nationality|громадянство)\b/i.test(line);
 }
 
 function isSectionHeading(line) {
@@ -1264,10 +1267,10 @@ function parseResumeSections(text) {
   // Collect contact lines (may be multiple)
   const contactLines = lines.filter(l => isContactLine(l));
   const contactLineSet = new Set(contactLines);
-  result.contact = contactLines.join('  |  ');
+  result.contact = uniqueNonEmpty(contactLines).join('\n');
 
   // Preserve original header lines from the top block (title, location, links, etc.)
-  const headerLines = topLines.filter(l => l !== result.name && !contactLineSet.has(l) && !isSectionHeading(l));
+  const headerLines = topLines.filter(l => !isSectionHeading(l));
   result.header = uniqueNonEmpty(headerLines).join('\n');
 
   // Parse sections
@@ -1419,14 +1422,15 @@ function rewriteResume(parsed, matched, missing, jobText) {
     : inferEducationFromRaw(parsed.raw);
 
   const headerLines = uniqueNonEmpty((parsed.header || '').split('\n'));
-  const contactParts = uniqueNonEmpty((parsed.contact || '').split('|').map(x => x.trim()));
+  const contactParts = uniqueNonEmpty((parsed.contact || '').split(/\n|\|/).map(x => x.trim()));
 
   let finalName = (parsed.name || '').trim();
-  const extraHeaderParts = [...headerLines];
-  if (!finalName && extraHeaderParts.length > 0) {
-    finalName = extraHeaderParts.shift();
+  if (!finalName) {
+    finalName = headerLines.find(l => !isContactLine(l)) || headerLines[0] || '';
   }
-  const finalContact = uniqueNonEmpty([...extraHeaderParts, ...contactParts]).join('  |  ');
+
+  const headerWithoutName = headerLines.filter(l => l !== finalName);
+  const finalContact = uniqueNonEmpty([...headerWithoutName, ...contactParts]).join('\n');
 
   return {
     name: finalName,
@@ -1631,11 +1635,16 @@ async function exportDOCX(adapted) {
   if (adapted.name) children.push(heading(adapted.name, 'title'));
 
   // Contact
-  if (adapted.contact) children.push(new Paragraph({
-    children: [new TextRun({ text: adapted.contact, color: '555577', size: 18, font: 'Calibri' })],
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 120 },
-  }));
+  if (adapted.contact) {
+    const contactLines = adapted.contact.split('\n').map(s => s.trim()).filter(Boolean);
+    contactLines.forEach((line, idx) => {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: line, color: '555577', size: 18, font: 'Calibri' })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: idx === contactLines.length - 1 ? 120 : 30 },
+      }));
+    });
+  }
 
   const sections = [
     { title: 'Профіль / Summary', text: adapted.summary },
@@ -1756,7 +1765,12 @@ async function exportPDF(adapted) {
   }
 
   if (adapted.name) addLine(adapted.name, { size: 22, bold: true, align: 'center', color: [15, 10, 45], spacing: 3 });
-  if (adapted.contact) addLine(adapted.contact, { size: 9, align: 'center', color: [110, 110, 140], spacing: 6 });
+  if (adapted.contact) {
+    for (const line of adapted.contact.split('\n').map(s => s.trim()).filter(Boolean)) {
+      addLine(line, { size: 9, align: 'center', color: [110, 110, 140], spacing: 2.5 });
+    }
+    y += 3.5;
+  }
 
   doc.setDrawColor(200, 200, 220);
   doc.setLineWidth(0.2);
