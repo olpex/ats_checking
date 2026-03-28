@@ -774,7 +774,8 @@ async function fetchJobFromUrl() {
   const btnText = document.getElementById('fetchBtnText');
   const jobTextarea = document.getElementById('jobText');
 
-  const rawUrl = input.value.trim();
+  const rawUrl = normalizeJobUrlInput(input.value);
+  input.value = rawUrl;
 
   // Basic validation
   if (!rawUrl) {
@@ -798,34 +799,29 @@ async function fetchJobFromUrl() {
   statusEl.className = 'fetch-status loading';
   statusEl.textContent = `⏳ Запит до ${parsedUrl.hostname}...`;
 
-  // CORS proxy — allorigins returns raw HTML
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`;
-
   try {
-    const resp = await fetch(proxyUrl, { signal: createTimeoutSignal(15000) });
-
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-    const html = await resp.text();
-    const extracted = extractJobTextFromHtml(html);
-
-    if (!extracted || extracted.length < 100) {
-      throw new Error('Не вдалося витягнути текст вакансії. Спробуйте скопіювати текст зі сторінки вручну.');
-    }
+    const { extracted, strategy } = await fetchJobContentWithStrategies(rawUrl);
 
     jobTextarea.value = extracted;
     document.getElementById('jobCount').textContent = `${countWords(extracted)} слів`;
 
     statusEl.className = 'fetch-status success';
-    statusEl.textContent = `✅ Завантажено з ${parsedUrl.hostname} · ${countWords(extracted)} слів`;
+    statusEl.textContent = `✅ Завантажено з ${parsedUrl.hostname} · ${countWords(extracted)} слів (${strategy})`;
 
     // Auto-switch to text view so user can review
     switchJobSource('text');
 
   } catch (err) {
     let msg = err.message || 'Помилка мережі.';
-    if (err.name === 'TimeoutError' || err.name === 'AbortError') msg = 'Час очікування вичерпано. Спробуйте ще раз або скопіюйте текст вручну.';
-    if (msg.includes('fetch') || msg.includes('network')) msg = 'Помилка мережі. Перевірте інтернет-з\'єднання.';
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      msg = 'Час очікування вичерпано. Сайт або проксі тимчасово недоступні.';
+    } else if (/CAPTCHA|Cloudflare|403|заблоковано|захист/i.test(msg)) {
+      msg = `Сайт ${parsedUrl.hostname} блокує автоматичне завантаження (CAPTCHA/403). Вставте текст вакансії вручну.`;
+    } else if (/Не вдалося отримати текст вакансії\./i.test(msg)) {
+      msg = `${msg}\nПорада: спробуйте інше посилання або вставте текст вакансії вручну.`;
+    } else if (/fetch|network|мережевий/i.test(msg)) {
+      msg = 'Не вдалося підключитися до сайту/проксі. Перевірте інтернет або спробуйте ще раз за 1-2 хвилини.';
+    }
 
     statusEl.className = 'fetch-status error';
     statusEl.textContent = `❌ ${msg}`;
