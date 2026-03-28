@@ -1231,12 +1231,19 @@ function isSectionHeading(line) {
 }
 
 function parseResumeSections(text) {
-  const result = { name: '', contact: '', summary: '', experience: '', education: '', skills: '', other: '', raw: text };
+  const result = { name: '', contact: '', header: '', summary: '', experience: '', education: '', skills: '', other: '', raw: text };
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   if (!lines.length) return result;
 
+  const firstSectionIndex = lines.findIndex(l => Boolean(isSectionHeading(l)));
+  const topLines = firstSectionIndex >= 0
+    ? lines.slice(0, firstSectionIndex)
+    : lines.slice(0, Math.min(lines.length, 6));
+
+  const nameSource = topLines.length ? topLines : lines;
+
   // Detect name — first non-contact, non-section line that looks like a name
-  const nameLine = lines.find(l => {
+  const nameLine = nameSource.find(l => {
     if (l.length < 2 || l.length > 60) return false;
     if (isContactLine(l)) return false;
     if (isSectionHeading(l)) return false;
@@ -1251,6 +1258,10 @@ function parseResumeSections(text) {
   const contactLines = lines.filter(l => isContactLine(l));
   const contactLineSet = new Set(contactLines);
   result.contact = contactLines.join('  |  ');
+
+  // Preserve original header lines from the top block (title, location, links, etc.)
+  const headerLines = topLines.filter(l => l !== result.name && !contactLineSet.has(l) && !isSectionHeading(l));
+  result.header = uniqueNonEmpty(headerLines).join('\n');
 
   // Parse sections
   let cur = null;
@@ -1400,9 +1411,19 @@ function rewriteResume(parsed, matched, missing, jobText) {
     ? parsed.education.trim()
     : inferEducationFromRaw(parsed.raw);
 
+  const headerLines = uniqueNonEmpty((parsed.header || '').split('\n'));
+  const contactParts = uniqueNonEmpty((parsed.contact || '').split('|').map(x => x.trim()));
+
+  let finalName = (parsed.name || '').trim();
+  const extraHeaderParts = [...headerLines];
+  if (!finalName && extraHeaderParts.length > 0) {
+    finalName = extraHeaderParts.shift();
+  }
+  const finalContact = uniqueNonEmpty([...extraHeaderParts, ...contactParts]).join('  |  ');
+
   return {
-    name: parsed.name || '',
-    contact: parsed.contact,
+    name: finalName,
+    contact: finalContact,
     summary: newSummary,
     skills: newSkills,
     experience: finalExperience,
