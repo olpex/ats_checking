@@ -73,7 +73,7 @@ const SECTIONS = [
     label: 'Мови',
     weight: 1,
     patterns: [
-      /\b(languages?|мови|english|ukrainian|deutsch|french|spanish|fluent|native|upper)\b/i,
+      /\b(languages?|мови|знання мов|english|ukrainian|deutsch|french|spanish|fluent|native|upper)\b/i,
     ],
   },
   {
@@ -81,7 +81,7 @@ const SECTIONS = [
     label: 'Проєкти / Projects',
     weight: 1,
     patterns: [
-      /\b(projects?|проєкти|portfolio|pet project|opensource|open-source|github)\b/i,
+      /\b(projects?|проєкти|project|portfolio|портфоліо|pet project|opensource|open-source|github)\b/i,
     ],
   },
   {
@@ -164,7 +164,8 @@ function isResumeNoiseLine(line) {
   if (/^\[!\[image/i.test(lower)) return true;
   if (/^#\s*(robota\.ua|work\.ua|до пошуку|відгукнутись)/i.test(t)) return true;
   if (/^\*\*[^*]{1,80}\*\*$/.test(t) && /(?:робот|job|vacancy|ваканс)/i.test(t)) return true;
-  if ((lower.match(/https?:\/\//g) || []).length >= 2) return true;
+  // Keep multi-link portfolio lines in resumes; remove only obvious asset/link spam.
+  if ((lower.match(/https?:\/\//g) || []).length >= 3 && /(cdn|image|social|logo|asset|icons?)/i.test(lower)) return true;
   if ((t.match(/\b(?:png|jpg|jpeg|svg|webp)\b/gi) || []).length >= 2) return true;
   return false;
 }
@@ -306,7 +307,7 @@ function evaluateSectionQuality(sectionKey, text) {
     education: { weakWords: 8, goodWords: 20 },
     skills: { weakWords: 8, goodWords: 20 },
     languages: { weakWords: 2, goodWords: 6 },
-    projects: { weakWords: 10, goodWords: 25 },
+    projects: { weakWords: 2, goodWords: 8 },
     certifications: { weakWords: 4, goodWords: 12 },
   };
   const t = thresholds[sectionKey] || { weakWords: 8, goodWords: 20 };
@@ -354,9 +355,9 @@ function detectSections(resumeText) {
     /\b(skills?|навички|технолог|stack|tools?|інструменти)\b/i.test(line)
     || (line.split(',').length >= 4 && !isDateRangeLine(line) && !/https?:\/\//i.test(line));
   const languageHeuristic = (line) =>
-    /\b(languages?|мови|english|ukrainian|german|deutsch|french|spanish|латиськ|німецьк|українськ|англійськ)\b/i.test(line);
+    /\b(languages?|мови|знання мов|english|ukrainian|german|deutsch|french|spanish|латиськ|німецьк|українськ|англійськ)\b/i.test(line);
   const projectHeuristic = (line) =>
-    /\b(project|проєкт|portfolio|github|pet project|youtube|канал)\b/i.test(line)
+    /\b(project|projects|проєкт|проєкти|portfolio|портфоліо|github|pet project|youtube|канал)\b/i.test(line)
     || /https?:\/\/\S+/i.test(line);
   const certHeuristic = (line) =>
     /\b(certif|сертиф|course|курси|academy|azure|aws|gcp|cisco|comptia|coursera|udemy|google)\b/i.test(line);
@@ -2267,7 +2268,7 @@ async function downloadResume() {
 // DOCX EXPORT (docx.js v7)
 // --------------------------------------------------------
 async function exportDOCX(adapted) {
-  const { Document, Paragraph, TextRun, HeadingLevel, Packer, AlignmentType, BorderStyle } = docx;
+  const { Document, Paragraph, TextRun, Packer, AlignmentType, BorderStyle } = docx;
 
   const children = [];
 
@@ -2286,18 +2287,71 @@ async function exportDOCX(adapted) {
     } : undefined,
   });
 
-  const bodyParagraphs = (text) => {
-    const lines = text.split('\n');
+  const normalizeDocxLines = (text, sectionKey) => {
+    let normalized = String(text || '')
+      .replace(/\r/g, '')
+      .replace(/(місяц[івя]\)|рок[иів]\)|нині\)|досі\))(?=[A-ZА-ЯІЇЄҐ])/g, '$1\n')
+      .replace(/(https?:\/\/\S+)(?=[A-ZА-ЯІЇЄҐ])/g, '$1\n')
+      .replace(/([.!?])\s+(?=[A-ZА-ЯІЇЄҐ])/g, '$1\n');
+
+    let lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
+
+    if (sectionKey === 'coreSkills' || sectionKey === 'certifications') {
+      const expanded = [];
+      for (const line of lines) {
+        const candidate = line.replace(/^[•\-\*→▹▸▪●]\s*/, '');
+        if (candidate.includes(',') && candidate.length > 24) {
+          const parts = candidate.split(',').map(p => p.trim()).filter(Boolean);
+          for (const part of parts) {
+            expanded.push(`• ${part}`);
+          }
+        } else {
+          expanded.push(line);
+        }
+      }
+      lines = expanded;
+    }
+
+    return lines;
+  };
+
+  const bodyParagraphs = (text, sectionKey) => {
+    const lines = normalizeDocxLines(text, sectionKey);
     const result = [];
+
+    const isExperienceHeader = (line) => {
+      const t = line.replace(/^[•\-\*→▹▸▪●]\s*/, '').trim();
+      if (isDateRangeLine(t)) return true;
+      if (/\(\d+\s*(?:рок|місяц)/i.test(t)) return true;
+      if (/^[A-ZА-ЯІЇЄҐ][^.!?]{2,110}$/.test(t) && /(ТОВ|ПП|ФОП|LLC|Inc|Ltd|департамент|центр|школа|університет|company)/i.test(t)) return true;
+      return false;
+    };
+
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      const isBullet = /^[•\-\*→▹▸▪●]\s*/.test(trimmed);
-      const cleanText = isBullet ? trimmed.replace(/^[•\-\*→▹▸▪●]\s*/, '') : trimmed;
+
+      const hasBulletMark = /^[•\-\*→▹▸▪●]\s*/.test(trimmed);
+      const cleanText = trimmed.replace(/^[•\-\*→▹▸▪●]\s*/, '');
+      const headerLike = sectionKey === 'experience' && isExperienceHeader(trimmed);
+      const forceBullet = (sectionKey === 'coreSkills' || sectionKey === 'certifications' || (sectionKey === 'experience' && !headerLike));
+      const isBullet = hasBulletMark || forceBullet;
+
       result.push(new Paragraph({
-        children: [new TextRun({ text: cleanText, size: 20, font: 'Calibri' })],
-        spacing: { after: isBullet ? 20 : 40 },
+        children: [new TextRun({
+          text: cleanText,
+          size: sectionKey === 'summary' ? 21 : 20,
+          font: 'Calibri',
+          bold: headerLike,
+          color: headerLike ? '1f2a44' : '1f2937',
+        })],
+        spacing: {
+          before: headerLike ? 90 : 0,
+          after: isBullet ? 70 : 95,
+          line: 320,
+        },
         bullet: isBullet ? { level: 0 } : undefined,
+        indent: isBullet ? { left: 240, hanging: 120 } : undefined,
       }));
     }
     return result;
@@ -2319,20 +2373,29 @@ async function exportDOCX(adapted) {
   }
 
   const sections = [
-    { title: 'Профіль / Summary', text: adapted.summary },
-    { title: 'Core Skills', text: adapted.coreSkills || adapted.skills },
-    { title: 'Досвід роботи', text: adapted.experience },
-    { title: 'Освіта', text: adapted.education },
-    { title: 'Сертифікації', text: adapted.certifications },
+    { key: 'summary', title: 'Профіль / Summary', text: adapted.summary },
+    { key: 'coreSkills', title: 'Core Skills', text: adapted.coreSkills || adapted.skills },
+    { key: 'experience', title: 'Досвід роботи', text: adapted.experience },
+    { key: 'education', title: 'Освіта', text: adapted.education },
+    { key: 'certifications', title: 'Сертифікації', text: adapted.certifications },
   ];
 
   for (const sec of sections) {
     if (!sec.text) continue;
     children.push(heading(sec.title, 'h2'));
-    children.push(...bodyParagraphs(sec.text));
+    children.push(...bodyParagraphs(sec.text, sec.key));
   }
 
-  const doc = new Document({ sections: [{ children }] });
+  const doc = new Document({
+    sections: [{
+      properties: {
+        page: {
+          margin: { top: 720, right: 900, bottom: 720, left: 900 },
+        },
+      },
+      children,
+    }],
+  });
   const blob = await Packer.toBlob(doc);
   triggerDownload(blob, 'adapted_resume.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 }
