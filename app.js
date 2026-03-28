@@ -774,8 +774,7 @@ async function fetchJobFromUrl() {
   const btnText = document.getElementById('fetchBtnText');
   const jobTextarea = document.getElementById('jobText');
 
-  const rawUrl = normalizeJobUrlInput(input.value);
-  input.value = rawUrl;
+  const rawUrl = input.value.trim();
 
   // Basic validation
   if (!rawUrl) {
@@ -799,27 +798,34 @@ async function fetchJobFromUrl() {
   statusEl.className = 'fetch-status loading';
   statusEl.textContent = `⏳ Запит до ${parsedUrl.hostname}...`;
 
+  // CORS proxy — allorigins returns raw HTML
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`;
+
   try {
-    const { extracted, strategy } = await fetchJobContentWithStrategies(rawUrl);
+    const resp = await fetch(proxyUrl, { signal: createTimeoutSignal(15000) });
+
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const html = await resp.text();
+    const extracted = extractJobTextFromHtml(html);
+
+    if (!extracted || extracted.length < 100) {
+      throw new Error('Не вдалося витягнути текст вакансії. Спробуйте скопіювати текст зі сторінки вручну.');
+    }
 
     jobTextarea.value = extracted;
     document.getElementById('jobCount').textContent = `${countWords(extracted)} слів`;
 
     statusEl.className = 'fetch-status success';
-    statusEl.textContent = `✅ Завантажено з ${parsedUrl.hostname} · ${countWords(extracted)} слів (${strategy})`;
+    statusEl.textContent = `✅ Завантажено з ${parsedUrl.hostname} · ${countWords(extracted)} слів`;
 
     // Auto-switch to text view so user can review
     switchJobSource('text');
 
   } catch (err) {
     let msg = err.message || 'Помилка мережі.';
-    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      msg = 'Час очікування вичерпано. Сайт може бути недоступний.';
-    } else if (msg.includes('CAPTCHA') || msg.includes('Cloudflare') || msg.includes('403') || msg.includes('заблоковано')) {
-      msg = `Сайт ${parsedUrl.hostname} блокує автоматичне завантаження (CAPTCHA/Cloudflare). Скопіюйте текст вакансії зі сторінки вручну та вставте на вкладці "Текст".`;
-    } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch')) {
-      msg = 'Не вдалося підключитися. Спробуйте скопіювати текст вакансії вручну.';
-    }
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') msg = 'Час очікування вичерпано. Спробуйте ще раз або скопіюйте текст вручну.';
+    if (msg.includes('fetch') || msg.includes('network')) msg = 'Помилка мережі. Перевірте інтернет-з\'єднання.';
 
     statusEl.className = 'fetch-status error';
     statusEl.textContent = `❌ ${msg}`;
