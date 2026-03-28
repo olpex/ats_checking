@@ -285,12 +285,91 @@ function extractKeywords(text, topN = 40) {
 // --------------------------------------------------------
 // SECTION DETECTOR
 // --------------------------------------------------------
+const SECTION_INSERT_TEMPLATES = {
+  contact: 'Контактна інформація\nТелефон: +380\nEmail: your@email.com\nLinkedIn: linkedin.com/in/username\nМісто: Київ',
+  summary: 'Профіль / Summary\nКороткий професійний профіль (3-5 речень): роль, стек, роки досвіду, ключова цінність.',
+  experience: 'Досвід роботи\nНазва посади — Компанія\n01.2023 - нині\n• Виконав(ла) ...\n• Оптимізував(ла) ... на X%',
+  education: 'Освіта\nНазва закладу — Спеціальність\n2018 - 2022',
+  skills: 'Навички / Skills\n• Skill 1\n• Skill 2\n• Skill 3',
+  languages: 'Мови\nУкраїнська — вільно\nАнглійська — Upper-Intermediate',
+  projects: 'Проєкти / Projects\nНазва проєкту\n• Короткий опис ролі та результату',
+  certifications: 'Сертифікати\nНазва сертифікату — Організація, Рік',
+};
+
+function evaluateSectionQuality(sectionKey, text) {
+  const words = countWords(text || '');
+  const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean).length;
+  const thresholds = {
+    contact: { weakWords: 2, goodWords: 6 },
+    summary: { weakWords: 10, goodWords: 30 },
+    experience: { weakWords: 25, goodWords: 80 },
+    education: { weakWords: 8, goodWords: 20 },
+    skills: { weakWords: 8, goodWords: 20 },
+    languages: { weakWords: 2, goodWords: 6 },
+    projects: { weakWords: 10, goodWords: 25 },
+    certifications: { weakWords: 4, goodWords: 12 },
+  };
+  const t = thresholds[sectionKey] || { weakWords: 8, goodWords: 20 };
+  if (words < t.weakWords || lines === 0) return { quality: 'missing', words, lines };
+  if (words < t.goodWords) return { quality: 'weak', words, lines };
+  return { quality: 'good', words, lines };
+}
+
 function detectSections(resumeText) {
+  const parsed = parseResumeSections(resumeText);
+  const otherText = `${parsed.other || ''}\n${parsed.raw || ''}`.toLowerCase();
+  const evidenceByKey = {
+    contact: `${parsed.contact || ''}\n${parsed.header || ''}`.trim(),
+    summary: parsed.summary || '',
+    experience: parsed.experience || '',
+    education: parsed.education || '',
+    skills: parsed.skills || '',
+    languages: (parsed.other || '').split('\n').filter(l => /\b(english|ukrainian|німец|deutsch|french|spanish|мова|мови)\b/i.test(l)).join('\n'),
+    projects: (parsed.other || '').split('\n').filter(l => /\b(project|проєкт|portfolio|github|pet project)\b/i.test(l) || /https?:\/\//i.test(l)).join('\n'),
+    certifications: parsed.certifications || (parsed.other || '').split('\n').filter(l => /\b(certif|сертиф|course|курс|azure|aws|gcp|cisco|comptia|coursera|udemy)\b/i.test(l)).join('\n'),
+  };
+
   return SECTIONS.map(sec => {
-    const found = sec.patterns.some(pat => pat.test(resumeText));
-    return { ...sec, found };
+    const localText = String(evidenceByKey[sec.key] || '');
+    const contentCheck = evaluateSectionQuality(sec.key, localText);
+    const patternFound = sec.patterns.some(pat => pat.test(localText) || pat.test(otherText));
+    const found = contentCheck.quality !== 'missing' || patternFound;
+    const quality = found ? (contentCheck.quality === 'missing' ? 'weak' : contentCheck.quality) : 'missing';
+
+    let detail = 'Секція відсутня';
+    if (found && quality === 'good') detail = `${contentCheck.words} слів, ${contentCheck.lines} рядків`;
+    if (found && quality === 'weak') detail = `Секція знайдена, але заповнена слабо (${contentCheck.words} слів)`;
+
+    return {
+      ...sec,
+      found,
+      quality,
+      words: contentCheck.words,
+      lines: contentCheck.lines,
+      detail,
+    };
   });
 }
+
+function appendSectionTemplate(sectionKey) {
+  const textarea = document.getElementById('resumeText');
+  if (!textarea) return;
+  const template = SECTION_INSERT_TEMPLATES[sectionKey];
+  if (!template) return;
+
+  const current = String(textarea.value || '').trim();
+  const updated = current ? `${current}\n\n${template}` : template;
+  textarea.value = updated;
+  document.getElementById('resumeCount').textContent = `${countWords(updated)} слів`;
+  textarea.focus();
+  textarea.setSelectionRange(updated.length, updated.length);
+
+  // Re-run analysis immediately so section diagnostics become interactive.
+  const jobText = String(document.getElementById('jobText')?.value || '').trim();
+  if (jobText) runAnalysis();
+}
+
+window.appendSectionTemplate = appendSectionTemplate;
 
 // --------------------------------------------------------
 // FORMAT CHECKER
@@ -540,7 +619,11 @@ function scoreATS(resumeText, jobText) {
   // Section detection
   const sections = detectSections(cleanResumeText);
   const secTotal = sections.reduce((s, sec) => s + sec.weight, 0);
-  const secFound = sections.filter(s => s.found).reduce((s, sec) => s + sec.weight, 0);
+  const secFound = sections.reduce((sum, sec) => {
+    if (!sec.found) return sum;
+    const qualityFactor = sec.quality === 'good' ? 1 : 0.65;
+    return sum + sec.weight * qualityFactor;
+  }, 0);
   const secScore = Math.round((secFound / secTotal) * 100);
 
   // Format
@@ -629,6 +712,15 @@ function buildRecommendations({
       priority: 'high',
       icon: '📋',
       text: `<strong>Відсутні важливі секції:</strong> ${missingSections.map(s => s.label).join(', ')}. ATS не зможе коректно розпізнати ваш досвід.`,
+    });
+  }
+
+  const weakSections = sections.filter(s => s.found && s.quality === 'weak');
+  if (weakSections.length > 0) {
+    recs.push({
+      priority: 'medium',
+      icon: '🧩',
+      text: `<strong>Секції потребують наповнення:</strong> ${weakSections.map(s => s.label).join(', ')}.`,
     });
   }
 
@@ -1304,10 +1396,18 @@ function renderResults(result) {
 
   // Sections
   document.getElementById('sectionsList').innerHTML = sections.map(s => `
-    <div class="section-row ${s.found ? 'found' : 'missing'}">
+    <div class="section-row ${s.found ? (s.quality === 'good' ? 'found' : 'weak') : 'missing'}">
       <span class="section-status">${s.found ? '✅' : '❌'}</span>
-      <span class="section-name">${s.label}</span>
-      <span class="section-badge">${s.found ? 'Знайдено' : 'Відсутня'}</span>
+      <div class="section-meta">
+        <span class="section-name">${s.label}</span>
+        <span class="section-detail">${s.detail}</span>
+      </div>
+      <div class="section-actions">
+        <span class="section-badge">${
+          !s.found ? 'Відсутня' : s.quality === 'good' ? 'Добре' : 'Слабко'
+        }</span>
+        ${!s.found ? `<button class="section-fix-btn" onclick="appendSectionTemplate('${s.key}')">+ Додати</button>` : ''}
+      </div>
     </div>
   `).join('');
 
