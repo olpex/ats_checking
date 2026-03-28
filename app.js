@@ -129,6 +129,41 @@ function normalizeTerm(term) {
   return t;
 }
 
+function isNoiseKeyword(term) {
+  const t = String(term || '').toLowerCase().trim();
+  if (!t) return true;
+  if (t.length > 45) return true;
+  if (/^https?:\/\//.test(t) || t.includes('www.')) return true;
+  if (/\b(?:com|ua|net|org|site|png|jpg|jpeg|svg|gif|webp)\b/.test(t) && t.includes('.')) return true;
+  if (/social-icons|cdn-cgi|company-logo|image\s*\d+/i.test(t)) return true;
+  if (/^\d+$/.test(t)) return true;
+  if (/^[#./:_-]+$/.test(t)) return true;
+  return false;
+}
+
+function isResumeNoiseLine(line) {
+  const t = String(line || '').trim();
+  const lower = t.toLowerCase();
+  if (!t) return true;
+  if (/^сервіс пошуку роботи/i.test(lower)) return true;
+  if (/^резюме кандидата розміщено за адресою/i.test(lower)) return true;
+  if (/^до пошуку$|^відгукнутись$/i.test(lower)) return true;
+  if (/social-icons|cdn-cgi|company-logo|^\[!\[image/i.test(lower)) return true;
+  if ((lower.match(/https?:\/\//g) || []).length >= 2) return true;
+  return false;
+}
+
+function sanitizeSectionText(text, maxLines = 80) {
+  return String(text || '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .filter(l => !isResumeNoiseLine(l))
+    .slice(0, maxLines)
+    .join('\n')
+    .trim();
+}
+
 // --------------------------------------------------------
 // TOKENIZER — preserves dots/hyphens in tech terms
 // --------------------------------------------------------
@@ -150,7 +185,9 @@ function extractKeywords(text, topN = 40) {
   const termScores = {};
 
   for (const token of rawTokens) {
+    if (isNoiseKeyword(token)) continue;
     const normalized = normalizeTerm(token);
+    if (isNoiseKeyword(normalized)) continue;
     if (normalized.length < 2) continue;
     if (!termScores[normalized]) termScores[normalized] = { score: 0, original: token };
 
@@ -174,7 +211,9 @@ function extractKeywords(text, topN = 40) {
       if (gramWords.some(w => STOP_WORDS.has(w) && !/^[a-z+#.]+$/.test(w))) continue;
       const phrase = gramWords.join(' ');
       if (phrase.length < 4 || phrase.length > 40) continue;
+      if (isNoiseKeyword(phrase)) continue;
       const normalized = normalizeTerm(phrase);
+      if (isNoiseKeyword(normalized)) continue;
       if (!termScores[normalized]) termScores[normalized] = { score: 0, original: phrase };
       termScores[normalized].score += ngram + 1; // 2-gram = 3pts, 3-gram = 4pts
     }
@@ -182,7 +221,7 @@ function extractKeywords(text, topN = 40) {
 
   // Sort by score descending, take top N
   return Object.entries(termScores)
-    .filter(([, v]) => v.score >= 1)
+    .filter(([k, v]) => v.score >= 1 && !isNoiseKeyword(k) && !isNoiseKeyword(v.original))
     .sort((a, b) => b[1].score - a[1].score)
     .slice(0, topN)
     .map(([k, v]) => ({ key: k, original: v.original, score: v.score }));
@@ -568,6 +607,9 @@ function cleanExtractedText(text) {
     .replace(/^Title:\s.*$/gmi, '')
     .replace(/^URL Source:\s.*$/gmi, '')
     .replace(/^Markdown Content:\s*$/gmi, '')
+    .replace(/\[!\[.*?\]\(.*?\)\]/g, ' ')
+    .replace(/\[(.*?)\]\((https?:\/\/.*?)\)/g, '$1')
+    .replace(/https?:\/\/\S+/g, ' ')
     .replace(/\s{3,}/g, '\n\n')  // collapse excess blank lines
     .replace(/\t/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
@@ -1214,7 +1256,7 @@ const RESUME_SECTION_PATTERNS = [
 function isContactLine(line) {
   return /@/.test(line)
     || /\+?\d[\d\s().-]{7,}\d/.test(line)
-    || /linkedin\.com|github\.com|behance\.net|portfolio|telegram|tg:|skype|website|site|http/i.test(line)
+    || /linkedin\.com|github\.com|behance\.net|t\.me\/|telegram|tg:|skype|portfolio|website/i.test(line)
     || /\b(phone|tel|e-?mail|email|contact|contacts|контакт|телефон|пошта|адрес|address|location|локац|місто|city|date of birth|дата народження|nationality|громадянство)\b/i.test(line);
 }
 
@@ -1242,7 +1284,11 @@ function isSectionHeading(line) {
 
 function parseResumeSections(text) {
   const result = { name: '', contact: '', header: '', summary: '', experience: '', education: '', skills: '', other: '', raw: text };
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .filter(l => !isResumeNoiseLine(l));
   if (!lines.length) return result;
 
   const firstSectionIndex = lines.findIndex(l => Boolean(isSectionHeading(l)));
@@ -1264,13 +1310,14 @@ function parseResumeSections(text) {
   });
   if (nameLine) result.name = nameLine;
 
-  // Collect contact lines (may be multiple)
-  const contactLines = lines.filter(l => isContactLine(l));
+  // Collect contact lines (limit to header area to avoid pulling URLs from body sections)
+  const contactSource = topLines.length ? topLines : lines.slice(0, Math.min(lines.length, 12));
+  const contactLines = contactSource.filter(l => isContactLine(l));
   const contactLineSet = new Set(contactLines);
   result.contact = uniqueNonEmpty(contactLines).join('\n');
 
   // Preserve original header lines from the top block (title, location, links, etc.)
-  const headerLines = topLines.filter(l => !isSectionHeading(l));
+  const headerLines = topLines.filter(l => !isSectionHeading(l) && !isResumeNoiseLine(l));
   result.header = uniqueNonEmpty(headerLines).join('\n');
 
   // Parse sections
@@ -1294,6 +1341,26 @@ function parseResumeSections(text) {
   return result;
 }
 
+function sanitizeJobTitleCandidate(rawTitle) {
+  return String(rawTitle || '')
+    .replace(/\[!\[.*?\]\(.*?\)\]/g, ' ')
+    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+    .replace(/[#*_`>]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isLikelyJobTitle(text) {
+  const t = String(text || '').trim();
+  if (t.length < 3 || t.length > 80) return false;
+  if (/https?:\/\/|www\.|@|cdn-cgi|social-icons|image\s*\d+/i.test(t)) return false;
+  if (/до пошуку|відгукнутись|готові розглядати|повна зайнятість|безкоштовне навчання|медичне страхування/i.test(t)) return false;
+  if ((t.match(/[|]/g) || []).length >= 2) return false;
+  const words = t.split(/\s+/);
+  if (words.length > 10) return false;
+  return true;
+}
+
 // --------------------------------------------------------
 // HELPER — detect job title from JD text
 // --------------------------------------------------------
@@ -1311,19 +1378,20 @@ function detectJobTitle(jobText) {
   for (const p of pats) {
     const m = jobText.match(p);
     if (m && m[1]) {
-      const title = m[1].trim().replace(/[.\s]+$/, '');
-      if (title.length >= 3 && title.length <= 60) return title;
+      const title = sanitizeJobTitleCandidate(m[1]).replace(/[.\s]+$/, '');
+      if (isLikelyJobTitle(title)) return title;
     }
   }
   // Fallback: first line that looks like a job title
   const lines = jobText.split('\n').map(l => l.trim()).filter(l => l.length > 3);
   for (const line of lines) {
-    if (line.length > 60) continue;
-    if (/developer|engineer|manager|designer|analyst|architect|lead|specialist|consultant|devops|маркетолог|розробник|інженер|менеджер|дизайнер|аналітик/i.test(line)) {
-      return line.replace(/[.\s]+$/, '');
+    const title = sanitizeJobTitleCandidate(line).replace(/[.\s]+$/, '');
+    if (!isLikelyJobTitle(title)) continue;
+    if (/developer|engineer|manager|designer|analyst|architect|lead|specialist|consultant|devops|маркетолог|розробник|інженер|менеджер|дизайнер|аналітик|адміністратор/i.test(title)) {
+      return title;
     }
   }
-  return lines[0] || 'Спеціаліст';
+  return 'Спеціаліст';
 }
 
 // --------------------------------------------------------
@@ -1376,12 +1444,12 @@ function uniqueNonEmpty(items) {
 function rewriteResume(parsed, matched, missing, jobText) {
   const jobTitle = detectJobTitle(jobText);
   const years = detectYearsExp(parsed.raw);
-  const topMatched = uniqueNonEmpty(matched).slice(0, 8);
-  const topMissing = uniqueNonEmpty(missing).slice(0, 6);
+  const topMatched = uniqueNonEmpty(matched).filter(k => !isNoiseKeyword(k)).slice(0, 8);
+  const topMissing = uniqueNonEmpty(missing).filter(k => !isNoiseKeyword(k)).slice(0, 6);
 
   // --- Summary ---
   // Preserve original summary as-is. Only add a short adaptation addendum.
-  const baseSummary = (parsed.summary || '').trim();
+  const baseSummary = sanitizeSectionText(parsed.summary, 12);
   let newSummary = baseSummary;
   if (!newSummary) {
     newSummary = `Фахівець із ${years}+ роками досвіду. Цільова позиція: ${jobTitle}.`;
@@ -1400,7 +1468,7 @@ function rewriteResume(parsed, matched, missing, jobText) {
 
   // --- Skills ---
   // Keep original skills block and only append adaptation notes.
-  const baseSkills = (parsed.skills || '').trim();
+  const baseSkills = sanitizeSectionText(parsed.skills, 40);
   const skillsAddendum = [];
   if (topMatched.length > 0) {
     skillsAddendum.push(`Релевантно до вакансії: ${topMatched.join(', ')}`);
@@ -1414,15 +1482,25 @@ function rewriteResume(parsed, matched, missing, jobText) {
 
   // --- Experience & Education: preserve original, don't dump raw ---
   const finalExperience = parsed.experience && parsed.experience.trim().length > 10
-    ? parsed.experience.trim()
-    : inferExperienceFromRaw(parsed.raw);
+    ? sanitizeSectionText(parsed.experience, 120)
+    : sanitizeSectionText(inferExperienceFromRaw(parsed.raw), 120);
 
   const finalEducation = parsed.education && parsed.education.trim().length > 10
-    ? parsed.education.trim()
-    : inferEducationFromRaw(parsed.raw);
+    ? sanitizeSectionText(parsed.education, 60)
+    : sanitizeSectionText(inferEducationFromRaw(parsed.raw), 60);
 
-  const headerLines = uniqueNonEmpty((parsed.header || '').split('\n'));
-  const contactParts = uniqueNonEmpty((parsed.contact || '').split(/\n|\|/).map(x => x.trim()));
+  const headerLines = uniqueNonEmpty(
+    (parsed.header || '')
+      .split('\n')
+      .map(x => x.trim())
+      .filter(x => !isResumeNoiseLine(x))
+  );
+  const contactParts = uniqueNonEmpty(
+    (parsed.contact || '')
+      .split(/\n|\|/)
+      .map(x => x.trim())
+      .filter(x => !isResumeNoiseLine(x))
+  );
 
   let finalName = (parsed.name || '').trim();
   if (!finalName) {
@@ -1439,7 +1517,7 @@ function rewriteResume(parsed, matched, missing, jobText) {
     skills: newSkills,
     experience: finalExperience,
     education: finalEducation,
-    other: [parsed.other, topMissing.length ? `Порада: не додавайте технології без практичного досвіду, навіть якщо вони є в JD.` : '']
+    other: [sanitizeSectionText(parsed.other, 40), topMissing.length ? `Порада: не додавайте технології без практичного досвіду, навіть якщо вони є в JD.` : '']
       .filter(Boolean)
       .join('\n\n'),
   };
