@@ -587,17 +587,20 @@ function looksLikeHtml(content) {
   return /<(html|body|main|article|section|div|p)[\s>]/i.test(content);
 }
 
-function detectBlockedPage(html) {
-  const lower = (html || '').toLowerCase();
+function detectBlockedPage(content) {
+  const text = String(content || '');
+  const lower = text.toLowerCase();
   const signals = [
     { pattern: /captcha|recaptcha|hcaptcha|turnstile/i, label: 'CAPTCHA' },
     { pattern: /cloudflare.*challenge|cf-browser-verification|ray id/i, label: 'Cloudflare захист' },
-    { pattern: /access denied|403 forbidden|forbidden/i, label: 'доступ заблоковано (403)' },
+    { pattern: /access denied|403 forbidden|forbidden|target url returned error 403/i, label: 'доступ заблоковано (403)' },
     { pattern: /please verify you are human|перевірте що ви не бот/i, label: 'перевірка бота' },
     { pattern: /checking your browser before|please wait while we check/i, label: 'перевірка браузера' },
+    { pattern: /requiring captcha|maybe requiring captcha/i, label: 'потрібна CAPTCHA' },
+    { pattern: /перевірка надійності підключення до сайту|перевірити безпеку вашого з.?єднання|перш ніж продовжити/i, label: 'перевірка безпеки з’єднання' },
   ];
   for (const s of signals) {
-    if (s.pattern.test(html)) return s.label;
+    if (s.pattern.test(text)) return s.label;
   }
   // Very short response that's not job content
   if (lower.length < 200 && /blocked|denied|error/.test(lower)) return 'відповідь заблокована';
@@ -621,6 +624,7 @@ function extractErrorMessage(err) {
 
 async function fetchJobContentWithStrategies(rawUrl) {
   const urlNoProtocol = rawUrl.replace(/^https?:\/\//i, '');
+  let protectionDetected = false;
   const strategies = [
     {
       label: 'прямий запит',
@@ -666,17 +670,21 @@ async function fetchJobContentWithStrategies(rawUrl) {
   for (const strategy of strategies) {
     try {
       const payload = await strategy.request();
-
-      // Check if response is a CAPTCHA/block page
-      if (looksLikeHtml(payload)) {
-        const blockReason = detectBlockedPage(payload);
-        if (blockReason) {
-          errors.push(`${strategy.label}: ${blockReason}`);
-          continue;
-        }
+      const rawBlockReason = detectBlockedPage(payload);
+      if (rawBlockReason) {
+        protectionDetected = true;
+        errors.push(`${strategy.label}: ${rawBlockReason}`);
+        continue;
       }
 
       const extracted = extractJobText(payload);
+      const extractedBlockReason = detectBlockedPage(extracted);
+      if (extractedBlockReason) {
+        protectionDetected = true;
+        errors.push(`${strategy.label}: ${extractedBlockReason}`);
+        continue;
+      }
+
       if (countWords(extracted) >= 35) {
         return { extracted, strategy: strategy.label };
       }
@@ -684,6 +692,10 @@ async function fetchJobContentWithStrategies(rawUrl) {
     } catch (err) {
       errors.push(`${strategy.label}: ${extractErrorMessage(err)}`);
     }
+  }
+
+  if (protectionDetected) {
+    throw new Error('Сайт повертає сторінку захисту (403/CAPTCHA). Для цього посилання вставте текст вакансії вручну в поле "Опис вакансії".');
   }
 
   throw new Error(`Не вдалося отримати текст вакансії. Спроби: ${errors.join(' | ')}`);
