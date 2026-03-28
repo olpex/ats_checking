@@ -812,7 +812,8 @@ async function fetchJobFromUrl() {
     switchJobSource('text');
 
   } catch (err) {
-    let msg = err.message || 'Помилка мережі.';
+    const rawReason = err && err.message ? String(err.message) : '';
+    let msg = rawReason || 'Помилка мережі.';
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
       msg = 'Час очікування вичерпано. Сайт або проксі тимчасово недоступні.';
     } else if (/CAPTCHA|Cloudflare|403|заблоковано|захист/i.test(msg)) {
@@ -821,6 +822,10 @@ async function fetchJobFromUrl() {
       msg = `${msg}\nПорада: спробуйте інше посилання або вставте текст вакансії вручну.`;
     } else if (/fetch|network|мережевий/i.test(msg)) {
       msg = 'Не вдалося підключитися до сайту/проксі. Перевірте інтернет або спробуйте ще раз за 1-2 хвилини.';
+    }
+
+    if (rawReason && !msg.includes(rawReason) && !/CAPTCHA|Cloudflare|403|захист/i.test(msg)) {
+      msg += `\nДеталі: ${rawReason}`;
     }
 
     statusEl.className = 'fetch-status error';
